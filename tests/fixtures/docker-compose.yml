@@ -1,0 +1,45 @@
+# The 6 fixed test containers test_assess_target.py asserts real findings
+# against (one clean baseline + one SSH misconfig + one permissions
+# misconfig, per distro family) -- ported verbatim from the
+# Invariant-Security/Invariant monolith's infra/docker-compose.yml as part
+# of the split into invariant_* services. Postgres/Adminer aren't here:
+# this service never touches Postgres (see api.py's module docstring).
+#
+# Run from repo root: docker compose -f tests/fixtures/docker-compose.yml up -d --build --wait
+
+services:
+  # tmpfs on all 6 (checks-backlog.md Group C's partition family, ported
+  # from the monolith): /dev/shm is already its own tmpfs by Docker's own
+  # default; these 5 aren't, by default part of the single root overlay
+  # filesystem. /var itself is deliberately NOT included -- it holds
+  # /var/lib/dpkg, which facts.py's installed_packages collection reads
+  # live; tmpfs-mounting it would blank that on every container start.
+  debian-baseline:
+    build: ./docker/debian-baseline
+    container_name: invariant-debian-baseline
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  debian-ssh-bad:
+    build: ./docker/debian-ssh-bad
+    container_name: invariant-debian-ssh-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  debian-permissions-bad:
+    build: ./docker/debian-permissions-bad
+    container_name: invariant-debian-permissions-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  ubuntu-baseline:
+    build: ./docker/ubuntu-baseline
+    container_name: invariant-ubuntu-baseline
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  ubuntu-ssh-bad:
+    build: ./docker/ubuntu-ssh-bad
+    container_name: invariant-ubuntu-ssh-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  ubuntu-permissions-bad:
+    build: ./docker/ubuntu-permissions-bad
+    container_name: invariant-ubuntu-permissions-bad
+    tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]

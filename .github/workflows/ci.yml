@@ -1,0 +1,35 @@
+# Sem Postgres, sem Playwright, sem import de documento CIS -- este
+# serviço não toca banco (ver api.py). Só sobe os 6 containers reais de
+# teste, roda a suíte inteira (unitários + integração via TestClient) e
+# derruba -- bem mais enxuto que o CI do monólito.
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      - name: Build and start the 6 fixed test containers
+        run: docker compose -f tests/fixtures/docker-compose.yml up -d --build --wait --wait-timeout 120
+
+      - run: pytest tests/ -q
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f tests/fixtures/docker-compose.yml logs --tail=80 || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f tests/fixtures/docker-compose.yml down -v || true

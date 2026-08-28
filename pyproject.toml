@@ -1,0 +1,30 @@
+[project]
+name = "invariant_assessment"
+version = "0.1.0"
+description = "Evaluates a target's collected facts against every implemented CIS control. No Postgres access -- see invariant_api for where results become real Findings."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+# ponytail: invariant_contracts is NOT a dependency here on purpose -- the
+# Opção B communication design means this service never constructs a
+# Target/Finding/Control, only its own local CheckResult/RunResponse
+# (api.py), so pulling in the shared contracts package would be an unused
+# dependency. Add it back only if a future endpoint here actually needs one
+# of those models.
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "httpx2"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits real Docker containers via `docker exec` instead of synthetic SystemFacts fixtures",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/invariant_assessment"]
