@@ -1,0 +1,43 @@
+# Roda no runner self-hosted dedicado deste repo (registrado direto nele,
+# não a nível de organização -- mesmo padrão já usado pelos outros
+# projetos desta VPS). Atualiza SÓ o container `assessment` na stack
+# compartilhada `invariant-next` (definida em invariant_api's
+# docker-compose.yml) -- api/ingestion/web nem percebem.
+#
+# Essa stack ainda NÃO está ligada ao roteamento público (nginx-proxy) --
+# valida em paralelo ao monólito (Strangler Fig), não substitui produção.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-invariant-assessment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: [self-hosted, vps-prod]
+    env:
+      SRC_DIR: /srv/projects/publicado/invariant_assessment
+      STACK_DIR: /srv/projects/publicado/invariant_api
+    steps:
+      - name: Atualizar código
+        run: |
+          git config --global --add safe.directory "$SRC_DIR"
+          cd "$SRC_DIR"
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Reconstruir e subir só este serviço
+        run: |
+          cd "$STACK_DIR"
+          docker compose up -d --build --wait --wait-timeout 180 assessment
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: |
+          cd "$STACK_DIR"
+          docker compose logs --tail=80 assessment || true
