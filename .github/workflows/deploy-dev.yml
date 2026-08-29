@@ -1,0 +1,38 @@
+# Espelha deploy.yml, mas pra branch `dev` -- atualiza o checkout separado
+# em invariant_assessment-dev/ e o container `assessment` da stack
+# invariant-next-dev (docker-compose.dev.yml vive em invariant_api-dev).
+name: deploy-dev
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: deploy-dev-invariant-assessment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-dev
+    runs-on: [self-hosted, vps-prod]
+    env:
+      SRC_DIR: /srv/projects/publicado/invariant_assessment-dev
+      STACK_DIR: /srv/projects/publicado/invariant_api-dev
+    steps:
+      - name: Atualizar código
+        run: |
+          git config --global --add safe.directory "$SRC_DIR"
+          cd "$SRC_DIR"
+          git fetch origin dev
+          git reset --hard origin/dev
+
+      - name: Reconstruir e subir só este serviço
+        run: |
+          cd "$STACK_DIR"
+          docker compose -f docker-compose.dev.yml up -d --build --wait --wait-timeout 180 assessment
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: |
+          cd "$STACK_DIR"
+          docker compose -f docker-compose.dev.yml logs --tail=80 assessment || true
