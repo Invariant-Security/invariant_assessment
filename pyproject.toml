@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    "paramiko",
 ]
 # ponytail: invariant_contracts is NOT a dependency here on purpose -- the
 # Opção B communication design means this service never constructs a

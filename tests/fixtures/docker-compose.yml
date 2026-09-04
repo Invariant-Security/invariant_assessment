@@ -43,3 +43,19 @@ services:
     build: ./docker/ubuntu-permissions-bad
     container_name: invariant-ubuntu-permissions-bad
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
+
+  # Phase 2 (SSHTransport) fixture -- the only one of these 7 services
+  # reached over a real TCP/SSH connection instead of `docker exec`, so
+  # it's the only one that needs a published host port at all. Bound to
+  # 127.0.0.1 only: this is a shared VPS, and this container runs a real
+  # sshd with a weak, well-known test password
+  # (invariant-test/invariant-test-password) -- publishing it to all
+  # interfaces would expose that to the network. See
+  # tests/fixtures/docker/ssh-target/Dockerfile. Host port 22022 (not the
+  # more obvious 2222) because something else on this shared host already
+  # has 2222 bound on all interfaces -- confirmed via `ss -tln` before
+  # picking this port, unrelated to this repo's own containers.
+  ssh-target:
+    build: ./docker/ssh-target
+    container_name: invariant-assessment-test-ssh-target
+    ports: ["127.0.0.1:22022:22"]

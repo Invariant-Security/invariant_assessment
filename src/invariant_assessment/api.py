@@ -7,11 +7,18 @@ CIS level/scored) is invariant_api's job, which owns the database.
 """
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from invariant_assessment import CHECKS, document_slug_for_os
+from invariant_assessment import CHECKS, document_slug_for_os, family_for_os
 from invariant_assessment.facts import collect_facts
 from invariant_assessment.observability import timed
+from invariant_assessment.transport import (
+    DockerExecTransport,
+    SSHTransport,
+    TransportAuthError,
+    TransportTimeoutError,
+    TransportUnreachableError,
+)
 
 app = FastAPI(title="Invariant Assessment")
 
@@ -32,19 +39,32 @@ class RunResponse(BaseModel):
     results: list[CheckResult]
 
 
-@app.post("/assessment/run", response_model=RunResponse)
-def run_assessment(target: str) -> RunResponse:
-    """One `docker exec` (collect_facts) against `target`, then every
-    CHECKS entry evaluated against that single snapshot. `target` is a
-    query param (not a body) since it's the only input -- matches how
-    lightweight this call is meant to stay.
+class SSHRemoteTarget(BaseModel):
+    """Body for POST /assessment/run-remote. Credentials are used exactly
+    once to build this request's SSHTransport, then discarded when the
+    function returns -- never logged, never stored, never echoed back in
+    RunResponse.
     """
-    with timed(f"collect_facts:{target}"):
-        facts = collect_facts(target)
 
+    host: str
+    port: int = 22
+    username: str
+    auth_method: str  # "key" | "password"
+    key_material: str | None = Field(default=None, repr=False)
+    password: str | None = Field(default=None, repr=False)
+
+
+def _evaluate_all(facts, target_label: str) -> RunResponse:
     if not facts.os_id or not facts.os_version_id:
-        raise HTTPException(422, f"could not detect OS for target {target!r}")
+        raise HTTPException(422, f"could not detect OS for {target_label!r}")
     document = document_slug_for_os(facts.os_id, facts.os_version_id)
+
+    try:
+        family = family_for_os(facts.os_id, facts.os_version_id)
+    except LookupError as e:
+        raise HTTPException(422, str(e)) from e
+
+    applicable_checks = [check for check in CHECKS if check.family == family]
 
     results = [
         CheckResult(
@@ -52,6 +72,46 @@ def run_assessment(target: str) -> RunResponse:
             status="PASS" if check.evaluate(facts) else "FAIL",
             evidence=check.evidence(facts),
         )
-        for check in CHECKS
+        for check in applicable_checks
     ]
     return RunResponse(document=document, results=results)
+
+
+@app.post("/assessment/run", response_model=RunResponse)
+def run_assessment(target: str) -> RunResponse:
+    """One `docker exec` (collect_facts) against `target`, then every
+    CHECKS entry evaluated against that single snapshot. `target` is a
+    query param (not a body) since it's the only input -- matches how
+    lightweight this call is meant to stay.
+    """
+    transport = DockerExecTransport(target=target)
+    with timed(f"collect_facts:{target}"):
+        facts = collect_facts(transport)
+    return _evaluate_all(facts, target)
+
+
+@app.post("/assessment/run-remote", response_model=RunResponse)
+def run_assessment_remote(payload: SSHRemoteTarget) -> RunResponse:
+    """Same pipeline as /assessment/run, reached over SSH instead of
+    docker exec. The timed() label below deliberately includes only
+    username@host:port -- NEVER auth_method/key_material/password.
+    """
+    transport = SSHTransport(
+        host=payload.host,
+        port=payload.port,
+        username=payload.username,
+        auth_method=payload.auth_method,
+        key_material=payload.key_material,
+        password=payload.password,
+    )
+    label = f"collect_facts:ssh:{payload.username}@{payload.host}:{payload.port}"
+    try:
+        with timed(label):
+            facts = collect_facts(transport)
+    except TransportAuthError as e:
+        raise HTTPException(401, str(e)) from e
+    except TransportUnreachableError as e:
+        raise HTTPException(502, str(e)) from e
+    except TransportTimeoutError as e:
+        raise HTTPException(504, str(e)) from e
+    return _evaluate_all(facts, payload.host)

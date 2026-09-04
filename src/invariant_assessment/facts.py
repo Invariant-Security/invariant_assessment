@@ -12,8 +12,9 @@ line in the collection script) -- individual Check.evaluate()/evidence()
 functions in invariant.assessment never run their own docker exec.
 """
 
-import subprocess
 from dataclasses import dataclass, field
+
+from invariant_assessment.transport import Transport
 
 # Paths every implemented Check currently needs stat() on. Grows as more
 # checks are added -- there's nothing distro-specific about this list, it's
@@ -549,18 +550,16 @@ def _parse_collect_output(output: str) -> SystemFacts:
     )
 
 
-def collect_facts(target: str) -> SystemFacts:
-    """Runs one compound command inside the target via `docker exec` and
-    parses its output into a SystemFacts snapshot -- everything a Check
-    needs, gathered in a single round trip.
+def collect_facts(transport: Transport) -> SystemFacts:
+    """Runs the collection script through the given transport (Docker
+    exec or SSH) and parses its output into a SystemFacts snapshot --
+    everything a Check needs, gathered in a single round trip. Fully
+    transport-agnostic: this function has never cared *how* the script
+    reached the target, only that it gets combined stdout+stderr text
+    back.
     """
-    result = subprocess.run(
-        ["docker", "exec", target, "sh", "-c", _collect_script()],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return _parse_collect_output(result.stdout + result.stderr)
+    output = transport.run(_collect_script())
+    return _parse_collect_output(output)
 
 
 _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods")

@@ -3906,11 +3906,19 @@ class Check:
     same underlying check), so the control is looked up by title, not a
     hardcoded external_id (also confirmed to drift between documents --
     Debian 13 uses 5.1.21 where the rest use 5.1.20).
+
+    `family` groups checks by the OS family they were written against
+    (systemd/shadow/shell tooling shape), so `run_assessment()` can filter
+    CHECKS down to only the ones applicable to a given target instead of
+    running every check against every OS unconditionally. Defaults to
+    "debian_ubuntu", the one real family that exists today -- see
+    `family_for_os()` below for the os_id -> family mapping.
     """
 
     titles: list[str]
     evaluate: Callable[[SystemFacts], bool]
     evidence: Callable[[SystemFacts], str]
+    family: str = "debian_ubuntu"
 
 
 # The only controls Invariant actually knows how to check right now.
@@ -5052,3 +5060,16 @@ def document_slug_for_os(os_id: str, version_id: str) -> str:
     whoever (invariant_api) actually looks controls up by it.
     """
     return f"{os_id}_linux_{version_id.replace('.', '_')}"
+
+
+def family_for_os(os_id: str, os_version_id: str) -> str:
+    """Maps a detected OS id to the Check.family group that applies to
+    it. Both "debian" and "ubuntu" share one family today (same
+    systemd, same /etc/shadow, same shell tooling) -- os_version_id is
+    accepted (not used yet) so this has the same signature shape as
+    document_slug_for_os() and room to matter once a family needs
+    version-level splits.
+    """
+    if os_id in ("debian", "ubuntu"):
+        return "debian_ubuntu"
+    raise LookupError(f"no check family known for os_id={os_id!r}")
