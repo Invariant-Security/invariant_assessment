@@ -18,6 +18,7 @@ from invariant_assessment.transport import (
     TransportAuthError,
     TransportTimeoutError,
     TransportUnreachableError,
+    list_docker_containers,
 )
 
 app = FastAPI(title="Invariant Assessment")
@@ -26,6 +27,22 @@ app = FastAPI(title="Invariant Assessment")
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+class ContainerInfo(BaseModel):
+    name: str
+    image: str
+
+
+@app.get("/assessment/containers", response_model=list[ContainerInfo])
+def containers() -> list[ContainerInfo]:
+    """Candidates for /assessment/run's `target` -- every container this
+    host's Docker socket can see. Filtering out invariant's own stack
+    (appliance/demo/infra, not a client asset) is invariant_api's job,
+    since it's the one with an opinion about naming conventions across
+    deployments; this stays a plain, unfiltered `docker ps`.
+    """
+    return [ContainerInfo(**c) for c in list_docker_containers()]
 
 
 class CheckResult(BaseModel):

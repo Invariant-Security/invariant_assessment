@@ -70,6 +70,29 @@ class DockerExecTransport:
         return result.stdout + result.stderr
 
 
+def list_docker_containers() -> list[dict]:
+    """Names+images of every running container reachable by this host's
+    Docker socket -- what DockerExecTransport's `target` can point at.
+    Same `docker` CLI dependency as DockerExecTransport.run(), no Docker
+    SDK needed for a one-shot `docker ps`.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}|{{.Image}}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    containers = []
+    for line in result.stdout.strip().splitlines():
+        if not line:
+            continue
+        name, _, image = line.partition("|")
+        containers.append({"name": name, "image": image})
+    return containers
+
+
 def _load_private_key(key_material: str):
     """Tries each paramiko key type in turn (Ed25519 first -- most common
     for real-world fleets today -- then ECDSA, RSA, DSS) since paramiko
