@@ -47,6 +47,25 @@ def test_unsupported_os_returns_clean_reason_not_raw_exception_text(monkeypatch)
     assert "LookupError" not in body["reason"]  # never the raw exception repr
 
 
+def test_collection_failure_is_not_an_unhandled_500(monkeypatch):
+    # Found live against loki (a distroless-style image with no `sh` at
+    # all): "docker exec ... sh -c ..." fails at the OCI runtime level,
+    # and the transport surfaces that as a plain LookupError from
+    # facts._parse_collect_output(), not one of the OS-detection cases.
+    def raise_collection_error(transport):
+        raise LookupError("collection script did not run as expected, got: 'exec: \"sh\": not found'")
+
+    monkeypatch.setattr(api, "collect_facts", raise_collection_error)
+
+    response = client.post("/assessment/check", params={"target": "loki"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["testable"] is False
+    assert body["reason_code"] == "collection_failed"
+    assert "LookupError" not in body["reason"]
+
+
 def test_os_not_detected(monkeypatch):
     monkeypatch.setattr(api, "collect_facts", lambda transport: _facts(None, None))
 

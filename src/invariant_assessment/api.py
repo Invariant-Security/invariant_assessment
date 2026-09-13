@@ -108,7 +108,7 @@ class CheckResponse(BaseModel):
     os_id: str | None = None
     os_version_id: str | None = None
     family: str | None = None
-    reason_code: str | None = None  # "os_not_detected" | "unsupported_os"
+    reason_code: str | None = None  # "collection_failed" | "os_not_detected" | "unsupported_os"
     reason: str | None = None  # human-readable, never a raw str(exception)
 
 
@@ -119,7 +119,22 @@ def check_target(target: str, response: Response) -> CheckResponse:
     # between calls; GET-like semantics on the public route this backs
     # (invariant_api's GET /containers/{name}/check) must not be cached.
     response.headers["Cache-Control"] = "no-store"
-    facts = collect_facts(DockerExecTransport(target=target))
+    try:
+        facts = collect_facts(DockerExecTransport(target=target))
+    except LookupError:
+        # collect_facts() raises a plain LookupError when the collection
+        # script didn't run as expected -- found live against a real
+        # container (loki, a distroless-style image with no `sh` at all:
+        # "docker exec ... sh -c ..." fails at the OCI runtime level
+        # before any of our script ever runs). Same thing could mean the
+        # container stopped between listing and checking it. Either way,
+        # this is "can't tell you anything about this container", not a
+        # server error.
+        return CheckResponse(
+            testable=False,
+            reason_code="collection_failed",
+            reason="Could not collect information from this container (no shell, or it may not be running).",
+        )
     if not facts.os_id or not facts.os_version_id:
         return CheckResponse(
             testable=False,
@@ -147,8 +162,14 @@ def run_assessment(target: str) -> RunResponse:
     lightweight this call is meant to stay.
     """
     transport = DockerExecTransport(target=target)
-    with timed(f"collect_facts:{target}"):
-        facts = collect_facts(transport)
+    try:
+        with timed(f"collect_facts:{target}"):
+            facts = collect_facts(transport)
+    except LookupError as e:
+        # Same collection-failure mode /assessment/check now handles
+        # gracefully (e.g. a container with no shell at all) -- found live
+        # against loki. A 422 here, not an unhandled 500.
+        raise HTTPException(422, str(e)) from e
     return _evaluate_all(facts, target)
 
 
