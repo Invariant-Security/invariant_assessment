@@ -6,7 +6,7 @@ evidence" -- turning that into a real Finding (external_id, remediation,
 CIS level/scored) is invariant_api's job, which owns the database.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from invariant_assessment import CHECKS, document_slug_for_os, family_for_os
@@ -92,6 +92,51 @@ def _evaluate_all(facts, target_label: str) -> RunResponse:
         for check in applicable_checks
     ]
     return RunResponse(document=document, results=results)
+
+
+class CheckResponse(BaseModel):
+    """Cheap pre-flight for /assessment/run's `target` -- detects OS and
+    checks it against the same family_for_os() gate _evaluate_all() uses,
+    but stops there (no CHECKS loop). Lets a caller ask "can this even be
+    assessed" before committing to a real run. `testable` has no default
+    on purpose: every return path below must set it explicitly, so a
+    missing branch fails loudly (Pydantic validation error) instead of
+    silently defaulting to a value that happens to be wrong.
+    """
+
+    testable: bool
+    os_id: str | None = None
+    os_version_id: str | None = None
+    family: str | None = None
+    reason_code: str | None = None  # "os_not_detected" | "unsupported_os"
+    reason: str | None = None  # human-readable, never a raw str(exception)
+
+
+@app.post("/assessment/check", response_model=CheckResponse)
+def check_target(target: str, response: Response) -> CheckResponse:
+    # Cache-Control: no-store -- this is about the container's *current*
+    # state, and a container can be recreated (same name, different OS)
+    # between calls; GET-like semantics on the public route this backs
+    # (invariant_api's GET /containers/{name}/check) must not be cached.
+    response.headers["Cache-Control"] = "no-store"
+    facts = collect_facts(DockerExecTransport(target=target))
+    if not facts.os_id or not facts.os_version_id:
+        return CheckResponse(
+            testable=False,
+            reason_code="os_not_detected",
+            reason="Could not detect the operating system for this container.",
+        )
+    try:
+        family = family_for_os(facts.os_id, facts.os_version_id)
+    except LookupError:
+        return CheckResponse(
+            testable=False,
+            os_id=facts.os_id,
+            os_version_id=facts.os_version_id,
+            reason_code="unsupported_os",
+            reason=f"{facts.os_id} {facts.os_version_id} is not supported yet.",
+        )
+    return CheckResponse(testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family)
 
 
 @app.post("/assessment/run", response_model=RunResponse)
