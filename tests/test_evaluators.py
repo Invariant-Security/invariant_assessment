@@ -160,9 +160,29 @@ def test_ssh_evaluator_fails_when_directive_missing():
     assert _evaluate_ssh_permit_root_login(facts) is False
 
 
+_REAL_SSHD_T_CONFIG = {
+    "permitrootlogin": "no",
+    "permituserenvironment": "no",
+    "ignorerhosts": "yes",
+    "logingracetime": "60",
+    "maxsessions": "10",
+    "usepam": "yes",
+}
+
+
 def test_sshd_state_present_when_sshd_config_populated():
-    facts = _facts(sshd_config={"permitrootlogin": "no"}, sshd_probe_raw="permitrootlogin no\n...")
+    facts = _facts(sshd_config=_REAL_SSHD_T_CONFIG, sshd_probe_raw="permitrootlogin no\n...")
     assert _sshd_state(facts) == "present"
+
+
+def test_sshd_state_not_fooled_by_a_single_line_error_that_happens_to_parse():
+    # Regression: parse_sshd_config() has no idea "sh: 1: sshd: not found"
+    # is an error, not real output -- it happily parses it into one bogus
+    # directive ({"sh:": "1: sshd: not found"}), which made
+    # bool(facts.sshd_config) alone falsely read as "present". Caught
+    # live: a real sshd-less container produced exactly this dict.
+    facts = _facts(sshd_config={"sh:": "1: sshd: not found"}, sshd_probe_raw="sh: 1: sshd: not found")
+    assert _sshd_state(facts) == "absent"
 
 
 def test_sshd_state_absent_on_real_command_not_found_error():
@@ -196,7 +216,7 @@ def test_sshd_directive_value_unknown_sentinel():
 
 
 def test_sshd_directive_value_real_value_when_present():
-    facts = _facts(sshd_config={"permitrootlogin": "no"})
+    facts = _facts(sshd_config=_REAL_SSHD_T_CONFIG)
     assert _sshd_directive_value(facts, "permitrootlogin") == "no"
 
 

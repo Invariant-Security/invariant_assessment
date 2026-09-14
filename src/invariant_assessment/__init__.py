@@ -29,19 +29,33 @@ from typing import Callable
 from invariant_assessment.facts import SystemFacts, collect_facts
 
 
+# Real `sshd -T` success always dumps dozens of directives (~60+) -- never
+# just one or two. Below that, `facts.sshd_config` isn't actually evidence
+# of success: parse_sshd_config() has no way to know a line came from
+# `sshd -T`'s real output rather than a shell error, so a single-line
+# failure like `sh: 1: sshd: not found` parses into one bogus "directive"
+# (`{"sh:": "1: sshd: not found"}`) -- confirmed live, this genuinely
+# happened against a real sshd-less container. `bool(facts.sshd_config)`
+# alone would have read that as "present". A small count threshold, far
+# below a real config's size and far above what a one-line error could
+# produce, tells them apart without needing parse_sshd_config() itself to
+# know about shell error shapes.
+_SSHD_CONFIG_MIN_DIRECTIVES_FOR_PRESENT = 5
+
+
 def _sshd_state(facts: SystemFacts) -> str:
     """'present' | 'absent' | 'unknown'. `facts.sshd_config` alone can't
-    tell these apart -- it's empty whether the sshd binary is missing, a
-    permission error blocked the probe, or the config itself is broken.
-    'present': `sshd -T` ran and reported at least one directive (it always
-    reports every effective directive when it runs, never a partial set).
-    'absent': the probe failed with a shell "command not found"-shaped
-    error (confirmed live: a container with no sshd package gives literally
-    `sh: 1: sshd: not found`). 'unknown': any other failure -- must never be
-    treated as "absent" downstream, since that would misreport a real
-    permission/config problem as "not applicable".
+    reliably tell these apart -- see _SSHD_CONFIG_MIN_DIRECTIVES_FOR_
+    PRESENT's comment for why a merely non-empty dict isn't proof `sshd -T`
+    actually ran. 'present': sshd_config has real directive-count evidence
+    of a genuine `sshd -T` success. 'absent': the probe failed with a
+    shell "command not found"-shaped error (confirmed live: a container
+    with no sshd package gives literally `sh: 1: sshd: not found`).
+    'unknown': any other failure -- must never be treated as "absent"
+    downstream, since that would misreport a real permission/config
+    problem as "not applicable".
     """
-    if facts.sshd_config:
+    if len(facts.sshd_config) >= _SSHD_CONFIG_MIN_DIRECTIVES_FOR_PRESENT:
         return "present"
     probe = facts.sshd_probe_raw.lower()
     if "not found" in probe or "no such file or directory" in probe:
