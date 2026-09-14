@@ -13,8 +13,10 @@ from invariant_assessment.facts import SystemFacts
 client = TestClient(app)
 
 
-def _facts(os_id=None, os_version_id=None) -> SystemFacts:
-    return SystemFacts(os_id=os_id, os_version_id=os_version_id, sshd_config={}, file_stats={})
+def _facts(os_id=None, os_version_id=None, hostname_probe_raw="") -> SystemFacts:
+    return SystemFacts(
+        os_id=os_id, os_version_id=os_version_id, sshd_config={}, file_stats={}, hostname_probe_raw=hostname_probe_raw
+    )
 
 
 def test_supported_os_is_testable(monkeypatch):
@@ -31,6 +33,7 @@ def test_supported_os_is_testable(monkeypatch):
         "family": "debian_ubuntu",
         "reason_code": None,
         "reason": None,
+        "hostname": None,
     }
 
 
@@ -76,6 +79,28 @@ def test_os_not_detected(monkeypatch):
     assert body["testable"] is False
     assert body["reason_code"] == "os_not_detected"
     assert body["os_id"] is None
+
+
+def test_hostname_surfaces_when_collected_cleanly(monkeypatch):
+    monkeypatch.setattr(
+        api, "collect_facts", lambda transport: _facts("debian", "12", hostname_probe_raw="invariant-demo-linux")
+    )
+
+    response = client.post("/assessment/check", params={"target": "tamois"})
+
+    assert response.json()["hostname"] == "invariant-demo-linux"
+
+
+def test_hostname_is_none_when_probe_looks_like_an_error(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "collect_facts",
+        lambda transport: _facts("debian", "12", hostname_probe_raw="cat: /etc/hostname: No such file or directory"),
+    )
+
+    response = client.post("/assessment/check", params={"target": "tamois"})
+
+    assert response.json()["hostname"] is None
 
 
 def test_response_is_never_cached(monkeypatch):

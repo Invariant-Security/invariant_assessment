@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from invariant_assessment import CHECKS, document_slug_for_os, family_for_os
-from invariant_assessment.facts import collect_facts
+from invariant_assessment.facts import clean_hostname, collect_facts
 from invariant_assessment.observability import timed
 from invariant_assessment.transport import (
     DockerExecTransport,
@@ -110,6 +110,7 @@ class CheckResponse(BaseModel):
     family: str | None = None
     reason_code: str | None = None  # "collection_failed" | "os_not_detected" | "unsupported_os"
     reason: str | None = None  # human-readable, never a raw str(exception)
+    hostname: str | None = None  # None if collection failed or the result didn't look like a real hostname
 
 
 @app.post("/assessment/check", response_model=CheckResponse)
@@ -135,11 +136,13 @@ def check_target(target: str, response: Response) -> CheckResponse:
             reason_code="collection_failed",
             reason="Could not collect information from this container (no shell, or it may not be running).",
         )
+    hostname = clean_hostname(facts.hostname_probe_raw)
     if not facts.os_id or not facts.os_version_id:
         return CheckResponse(
             testable=False,
             reason_code="os_not_detected",
             reason="Could not detect the operating system for this container.",
+            hostname=hostname,
         )
     try:
         family = family_for_os(facts.os_id, facts.os_version_id)
@@ -150,8 +153,11 @@ def check_target(target: str, response: Response) -> CheckResponse:
             os_version_id=facts.os_version_id,
             reason_code="unsupported_os",
             reason=f"{facts.os_id} {facts.os_version_id} is not supported yet.",
+            hostname=hostname,
         )
-    return CheckResponse(testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family)
+    return CheckResponse(
+        testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family, hostname=hostname
+    )
 
 
 @app.post("/assessment/run", response_model=RunResponse)
@@ -198,3 +204,60 @@ def run_assessment_remote(payload: SSHRemoteTarget) -> RunResponse:
     except TransportTimeoutError as e:
         raise HTTPException(504, str(e)) from e
     return _evaluate_all(facts, payload.host)
+
+
+@app.post("/assessment/check-remote", response_model=CheckResponse)
+def check_remote(payload: SSHRemoteTarget, response: Response) -> CheckResponse:
+    """SSH twin of /assessment/check -- same cheap pre-flight (OS
+    detection, family_for_os() gate, no CHECKS loop), reached over SSH
+    instead of docker exec. Auth/network failures are real errors here
+    (401/502/504, same mapping /assessment/run-remote already uses), not
+    a soft testable=False -- unlike collection succeeding but finding no
+    shell/OS, which (like the docker-exec path) just means "can't tell
+    you anything about this host".
+    """
+    response.headers["Cache-Control"] = "no-store"
+    transport = SSHTransport(
+        host=payload.host,
+        port=payload.port,
+        username=payload.username,
+        auth_method=payload.auth_method,
+        key_material=payload.key_material,
+        password=payload.password,
+    )
+    try:
+        facts = collect_facts(transport)
+    except LookupError:
+        return CheckResponse(
+            testable=False,
+            reason_code="collection_failed",
+            reason="Could not collect information from this host (check connectivity).",
+        )
+    except TransportAuthError as e:
+        raise HTTPException(401, str(e)) from e
+    except TransportUnreachableError as e:
+        raise HTTPException(502, str(e)) from e
+    except TransportTimeoutError as e:
+        raise HTTPException(504, str(e)) from e
+    hostname = clean_hostname(facts.hostname_probe_raw)
+    if not facts.os_id or not facts.os_version_id:
+        return CheckResponse(
+            testable=False,
+            reason_code="os_not_detected",
+            reason="Could not detect the operating system for this host.",
+            hostname=hostname,
+        )
+    try:
+        family = family_for_os(facts.os_id, facts.os_version_id)
+    except LookupError:
+        return CheckResponse(
+            testable=False,
+            os_id=facts.os_id,
+            os_version_id=facts.os_version_id,
+            reason_code="unsupported_os",
+            reason=f"{facts.os_id} {facts.os_version_id} is not supported yet.",
+            hostname=hostname,
+        )
+    return CheckResponse(
+        testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family, hostname=hostname
+    )

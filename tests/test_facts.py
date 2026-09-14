@@ -9,6 +9,7 @@ from invariant_assessment.facts import (
     _parse_collect_output,
     _parse_installed_packages,
     _parse_stat_line,
+    clean_hostname,
     is_running_in_container,
     parse_sshd_config,
 )
@@ -64,6 +65,28 @@ def test_parse_installed_packages_splits_lines_and_strips_blank():
 
 def test_parse_installed_packages_empty_on_no_output():
     assert _parse_installed_packages("") == set()
+
+
+def test_clean_hostname_accepts_a_real_single_word_hostname():
+    assert clean_hostname("invariant-demo-linux\n") == "invariant-demo-linux"
+
+
+def test_clean_hostname_rejects_empty_output():
+    assert clean_hostname("") is None
+    assert clean_hostname("   \n") is None
+
+
+def test_clean_hostname_rejects_error_text():
+    assert clean_hostname("cat: /etc/hostname: No such file or directory") is None
+    assert clean_hostname("cat: /etc/hostname: Permission denied") is None
+
+
+def test_parse_collect_output_extracts_hostname():
+    output = _build_full_output({"hostname_probe_raw": "invariant-demo-linux"})
+
+    facts = _parse_collect_output(output)
+
+    assert clean_hostname(facts.hostname_probe_raw) == "invariant-demo-linux"
 
 
 def test_parse_collect_output_full_script_output():

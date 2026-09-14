@@ -243,6 +243,52 @@ def test_run_assessment_remote_unreachable_returns_502():
     assert resp.status_code == 502
 
 
+def test_check_remote_endpoint_end_to_end():
+    resp = client.post(
+        "/assessment/check-remote",
+        json={
+            "host": _SSH_HOST,
+            "port": _SSH_PORT,
+            "username": _SSH_USER,
+            "auth_method": "password",
+            "password": _SSH_PASSWORD,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["testable"] is True
+    assert data["os_id"] is not None
+    assert data["family"] is not None
+
+
+def test_check_remote_bad_password_returns_401():
+    resp = client.post(
+        "/assessment/check-remote",
+        json={
+            "host": _SSH_HOST,
+            "port": _SSH_PORT,
+            "username": _SSH_USER,
+            "auth_method": "password",
+            "password": "wrong",
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_check_remote_unreachable_returns_502():
+    resp = client.post(
+        "/assessment/check-remote",
+        json={
+            "host": _SSH_HOST,
+            "port": 1,
+            "username": "x",
+            "auth_method": "password",
+            "password": "x",
+        },
+    )
+    assert resp.status_code == 502
+
+
 _MARKER_PASSWORD = "SUPER-SECRET-MARKER-XYZ-DO-NOT-LEAK"
 
 
