@@ -29,13 +29,41 @@ from typing import Callable
 from invariant_assessment.facts import SystemFacts, collect_facts
 
 
+def _sshd_state(facts: SystemFacts) -> str:
+    """'present' | 'absent' | 'unknown'. `facts.sshd_config` alone can't
+    tell these apart -- it's empty whether the sshd binary is missing, a
+    permission error blocked the probe, or the config itself is broken.
+    'present': `sshd -T` ran and reported at least one directive (it always
+    reports every effective directive when it runs, never a partial set).
+    'absent': the probe failed with a shell "command not found"-shaped
+    error (confirmed live: a container with no sshd package gives literally
+    `sh: 1: sshd: not found`). 'unknown': any other failure -- must never be
+    treated as "absent" downstream, since that would misreport a real
+    permission/config problem as "not applicable".
+    """
+    if facts.sshd_config:
+        return "present"
+    probe = facts.sshd_probe_raw.lower()
+    if "not found" in probe or "no such file or directory" in probe:
+        return "absent"
+    return "unknown"
+
+
+def _sshd_directive_value(facts: SystemFacts, directive: str) -> str:
+    state = _sshd_state(facts)
+    if state == "absent":
+        return "<sshd-not-installed>"
+    if state == "unknown":
+        return "<sshd-status-unknown>"
+    return facts.sshd_config.get(directive, "<not set>")
+
 
 def _evaluate_ssh_permit_root_login(facts: SystemFacts) -> bool:
     return facts.sshd_config.get("permitrootlogin", "").lower() == "no"
 
 
 def _evidence_ssh_permit_root_login(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("permitrootlogin", "<not set>")
+    value = _sshd_directive_value(facts, "permitrootlogin")
     return f"sshd_config: PermitRootLogin {value}"
 
 
@@ -61,7 +89,7 @@ def _evaluate_ssh_permit_user_environment(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_permit_user_environment(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("permituserenvironment", "<not set>")
+    value = _sshd_directive_value(facts, "permituserenvironment")
     return f"sshd_config: PermitUserEnvironment {value}"
 
 
@@ -70,7 +98,7 @@ def _evaluate_ssh_ignore_rhosts(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_ignore_rhosts(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("ignorerhosts", "<not set>")
+    value = _sshd_directive_value(facts, "ignorerhosts")
     return f"sshd_config: IgnoreRhosts {value}"
 
 
@@ -84,7 +112,7 @@ def _evaluate_ssh_login_grace_time(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("logingracetime", "<not set>")
+    value = _sshd_directive_value(facts, "logingracetime")
     return f"sshd_config: LoginGraceTime {value}"
 
 
@@ -894,7 +922,7 @@ def _evaluate_ssh_max_sessions(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_max_sessions(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("maxsessions", "<not set>")
+    value = _sshd_directive_value(facts, "maxsessions")
     return f"sshd_config: MaxSessions {value}"
 
 
@@ -910,7 +938,7 @@ def _evaluate_ssh_log_level(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_log_level(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("loglevel", "<not set>")
+    value = _sshd_directive_value(facts, "loglevel")
     return f"sshd_config: LogLevel {value}"
 
 
@@ -919,7 +947,7 @@ def _evaluate_ssh_use_pam(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_use_pam(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("usepam", "<not set>")
+    value = _sshd_directive_value(facts, "usepam")
     return f"sshd_config: UsePAM {value}"
 
 
@@ -937,7 +965,7 @@ def _evaluate_ssh_disable_forwarding(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_disable_forwarding(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("disableforwarding", "<not set>")
+    value = _sshd_directive_value(facts, "disableforwarding")
     return f"sshd_config: DisableForwarding {value}"
 
 
@@ -963,7 +991,7 @@ def _evaluate_ssh_ciphers(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_ciphers(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("ciphers", "<not set>")
+    value = _sshd_directive_value(facts, "ciphers")
     return f"sshd_config: Ciphers {value}"
 
 
@@ -987,7 +1015,7 @@ def _evaluate_ssh_kex_algorithms(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_kex_algorithms(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("kexalgorithms", "<not set>")
+    value = _sshd_directive_value(facts, "kexalgorithms")
     return f"sshd_config: KexAlgorithms {value}"
 
 
@@ -1672,7 +1700,7 @@ def _evaluate_ssh_macs(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_macs(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("macs", "<not set>")
+    value = _sshd_directive_value(facts, "macs")
     return f"sshd_config: MACs {value}"
 
 
@@ -1695,7 +1723,7 @@ def _evaluate_ssh_max_startups(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_max_startups(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("maxstartups", "<not set>")
+    value = _sshd_directive_value(facts, "maxstartups")
     return f"sshd_config: MaxStartups {value}"
 
 
@@ -1858,7 +1886,7 @@ def _evaluate_ssh_max_auth_tries(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_max_auth_tries(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("maxauthtries", "<not set>")
+    value = _sshd_directive_value(facts, "maxauthtries")
     return f"sshd_config: MaxAuthTries {value}"
 
 
@@ -1867,7 +1895,7 @@ def _evaluate_ssh_permit_empty_passwords(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_permit_empty_passwords(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("permitemptypasswords", "<not set>")
+    value = _sshd_directive_value(facts, "permitemptypasswords")
     return f"sshd_config: PermitEmptyPasswords {value}"
 
 
@@ -1876,7 +1904,7 @@ def _evaluate_ssh_hostbased_authentication(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_hostbased_authentication(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("hostbasedauthentication", "<not set>")
+    value = _sshd_directive_value(facts, "hostbasedauthentication")
     return f"sshd_config: HostbasedAuthentication {value}"
 
 
@@ -1885,7 +1913,7 @@ def _evaluate_ssh_gssapi_authentication(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_gssapi_authentication(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("gssapiauthentication", "<not set>")
+    value = _sshd_directive_value(facts, "gssapiauthentication")
     return f"sshd_config: GSSAPIAuthentication {value}"
 
 
@@ -1904,8 +1932,8 @@ def _evaluate_ssh_client_alive(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_client_alive(facts: SystemFacts) -> str:
-    interval = facts.sshd_config.get("clientaliveinterval", "<not set>")
-    count_max = facts.sshd_config.get("clientalivecountmax", "<not set>")
+    interval = _sshd_directive_value(facts, "clientaliveinterval")
+    count_max = _sshd_directive_value(facts, "clientalivecountmax")
     return f"sshd_config: ClientAliveInterval {interval}, ClientAliveCountMax {count_max}"
 
 
@@ -1926,7 +1954,7 @@ def _evaluate_ssh_banner(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_banner(facts: SystemFacts) -> str:
-    value = facts.sshd_config.get("banner", "<not set>")
+    value = _sshd_directive_value(facts, "banner")
     return f"sshd_config: Banner {value} (directive-set only, content not verified)"
 
 
@@ -1946,6 +1974,16 @@ def _evaluate_ssh_access(facts: SystemFacts) -> bool:
 
 
 def _evidence_ssh_access(facts: SystemFacts) -> str:
+    # Unlike every other _evidence_ssh_* function, an empty sshd_config
+    # here is naturally indistinguishable from "sshd present but none of
+    # AllowUsers/.../DenyGroups set" -- so this one needs the explicit
+    # tri-state check too, not just the shared .get() default, or its
+    # evidence text would carry no absent/unknown signal at all.
+    state = _sshd_state(facts)
+    if state == "absent":
+        return "sshd_config: <sshd-not-installed>"
+    if state == "unknown":
+        return "sshd_config: <sshd-status-unknown>"
     parts = [
         f"{directive}={facts.sshd_config[directive]}"
         for directive in ("allowusers", "allowgroups", "denyusers", "denygroups")

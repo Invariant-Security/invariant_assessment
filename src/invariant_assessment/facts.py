@@ -411,6 +411,12 @@ class SystemFacts:
     audit_rules_sync_text: str = ""
     mounts_text: str = ""
     container_detection_text: str = ""
+    # Raw `sshd -T` probe output, same slice of text parse_sshd_config()
+    # already reduces to sshd_config -- kept here too because a parsed
+    # empty dict is ambiguous (binary missing vs. permission error vs.
+    # broken config all produce "no directives parsed"), and distinguishing
+    # those matters downstream (invariant_api's SSH applicability logic).
+    sshd_probe_raw: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -511,6 +517,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         os_id=os_release.get("ID"),
         os_version_id=os_release.get("VERSION_ID"),
         sshd_config=sshd_config,
+        sshd_probe_raw=segments[_MARKER_SSHD_CONFIG],
         file_stats=file_stats,
         passwd_text=text_values["passwd_text"],
         group_text=text_values["group_text"],
