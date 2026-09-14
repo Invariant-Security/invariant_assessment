@@ -108,8 +108,10 @@ def test_ssh_transport_password_auth_matches_docker_exec_facts():
     # audit tools) and so legitimately differ in *how* the command isn't
     # found ("not found" vs "no hostkeys available") depending on which
     # PATH resolved it -- every other field, including every permission/
-    # content-sensitive one, must still match exactly.
-    _PATH_DEPENDENT_FIELDS = {"sshd_config", "audit_conf_text"}
+    # content-sensitive one, must still match exactly. sshd_probe_raw is
+    # sshd_config's own pre-parse raw text (same command, same PATH
+    # sensitivity), so it inherits the same exclusion.
+    _PATH_DEPENDENT_FIELDS = {"sshd_config", "sshd_probe_raw", "audit_conf_text"}
     docker_dict = {k: v for k, v in vars(docker_facts).items() if k not in _PATH_DEPENDENT_FIELDS}
     ssh_dict = {k: v for k, v in vars(ssh_facts).items() if k not in _PATH_DEPENDENT_FIELDS}
     assert docker_dict == ssh_dict
@@ -122,6 +124,8 @@ def test_ssh_transport_password_auth_matches_docker_exec_facts():
     # produce, rather than asserting byte-identical error text.
     assert docker_facts.sshd_config == {} or "sshd" in str(docker_facts.sshd_config)
     assert ssh_facts.sshd_config == {} or "sshd" in str(ssh_facts.sshd_config)
+    assert docker_facts.sshd_probe_raw != ""
+    assert ssh_facts.sshd_probe_raw != ""
 
 
 def test_ssh_transport_key_auth():
