@@ -357,7 +357,17 @@ def _collect_script() -> str:
     )
     return (
         f"echo '{_MARKER_OS_RELEASE}'; cat /etc/os-release 2>&1; "
-        f"echo '{_MARKER_SSHD_CONFIG}'; sshd -T 2>&1; "
+        # Absolute path, not bare `sshd` -- confirmed live against a real
+        # SSH-reached host (unprivileged, non-login shell): PATH there is
+        # just /usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games,
+        # no /sbin or /usr/sbin (same gap test_transport.py's own docstring
+        # already documented for audit tools). A bare `sshd -T` failed with
+        # "command not found" on a host where sshd was genuinely installed
+        # and actively serving this very connection -- misread as ABSENT
+        # instead of the real answer (present, but this unprivileged user
+        # can't read the host keys sshd -T needs, i.e. UNKNOWN). Debian/
+        # Ubuntu (the only supported family) always ships sshd at this path.
+        f"echo '{_MARKER_SSHD_CONFIG}'; /usr/sbin/sshd -T 2>&1; "
         f"{text_commands}; "
         f"{stat_commands}"
     )
