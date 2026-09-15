@@ -84,12 +84,16 @@ from invariant_assessment import (
     _evaluate_telnet_client_not_installed,
     _evaluate_x_window_not_installed,
     _evaluate_xinetd_not_installed,
+    _evidence_ssh_permit_root_login,
+    _sshd_directive_value,
+    _sshd_state,
 )
 from invariant_assessment.facts import FileStat, SystemFacts
 
 
 def _facts(
     sshd_config=None,
+    sshd_probe_raw="",
     shadow_stat=None,
     file_stats=None,
     passwd_text="",
@@ -119,6 +123,7 @@ def _facts(
         os_id=os_id,
         os_version_id=os_version_id,
         sshd_config=sshd_config or {},
+        sshd_probe_raw=sshd_probe_raw,
         file_stats=stats,
         passwd_text=passwd_text,
         group_text=group_text,
@@ -153,6 +158,71 @@ def test_ssh_evaluator_fails_when_root_login_enabled():
 def test_ssh_evaluator_fails_when_directive_missing():
     facts = _facts(sshd_config={})
     assert _evaluate_ssh_permit_root_login(facts) is False
+
+
+_REAL_SSHD_T_CONFIG = {
+    "permitrootlogin": "no",
+    "permituserenvironment": "no",
+    "ignorerhosts": "yes",
+    "logingracetime": "60",
+    "maxsessions": "10",
+    "usepam": "yes",
+}
+
+
+def test_sshd_state_present_when_sshd_config_populated():
+    facts = _facts(sshd_config=_REAL_SSHD_T_CONFIG, sshd_probe_raw="permitrootlogin no\n...")
+    assert _sshd_state(facts) == "present"
+
+
+def test_sshd_state_not_fooled_by_a_single_line_error_that_happens_to_parse():
+    # Regression: parse_sshd_config() has no idea "sh: 1: sshd: not found"
+    # is an error, not real output -- it happily parses it into one bogus
+    # directive ({"sh:": "1: sshd: not found"}), which made
+    # bool(facts.sshd_config) alone falsely read as "present". Caught
+    # live: a real sshd-less container produced exactly this dict.
+    facts = _facts(sshd_config={"sh:": "1: sshd: not found"}, sshd_probe_raw="sh: 1: sshd: not found")
+    assert _sshd_state(facts) == "absent"
+
+
+def test_sshd_state_absent_on_real_command_not_found_error():
+    # Exact text observed live against a real container with no sshd
+    # package (tamois, babybet-db): `sh -c "sshd -T 2>&1"` -> exit 127.
+    facts = _facts(sshd_config={}, sshd_probe_raw="sh: 1: sshd: not found")
+    assert _sshd_state(facts) == "absent"
+
+
+def test_sshd_state_unknown_on_a_different_error():
+    # A permission error or broken config also leaves sshd_config empty,
+    # but must never be reported as "absent" -- that would misattribute a
+    # real problem as "not applicable to this environment".
+    facts = _facts(sshd_config={}, sshd_probe_raw="sshd: Permission denied")
+    assert _sshd_state(facts) == "unknown"
+
+
+def test_sshd_state_unknown_when_probe_text_is_empty():
+    facts = _facts(sshd_config={}, sshd_probe_raw="")
+    assert _sshd_state(facts) == "unknown"
+
+
+def test_sshd_directive_value_absent_sentinel():
+    facts = _facts(sshd_config={}, sshd_probe_raw="sh: 1: sshd: not found")
+    assert _sshd_directive_value(facts, "permitrootlogin") == "<sshd-not-installed>"
+
+
+def test_sshd_directive_value_unknown_sentinel():
+    facts = _facts(sshd_config={}, sshd_probe_raw="sshd: Permission denied")
+    assert _sshd_directive_value(facts, "permitrootlogin") == "<sshd-status-unknown>"
+
+
+def test_sshd_directive_value_real_value_when_present():
+    facts = _facts(sshd_config=_REAL_SSHD_T_CONFIG)
+    assert _sshd_directive_value(facts, "permitrootlogin") == "no"
+
+
+def test_evidence_ssh_permit_root_login_carries_absent_sentinel():
+    facts = _facts(sshd_config={}, sshd_probe_raw="sh: 1: sshd: not found")
+    assert _evidence_ssh_permit_root_login(facts) == "sshd_config: PermitRootLogin <sshd-not-installed>"
 
 
 def test_shadow_evaluator_passes_on_640_root_shadow():

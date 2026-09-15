@@ -162,3 +162,22 @@ def test_unknown_os_returns_422(monkeypatch):
     monkeypatch.setattr("invariant_assessment.api.collect_facts", fake_collect_facts)
     resp = client.post("/assessment/run", params={"target": "some-unknown-target"})
     assert resp.status_code == 422
+
+
+def test_unknown_family_returns_422(monkeypatch):
+    """A target whose OS is detected fine (os_id/os_version_id populated)
+    but has no known Check.family group -- e.g. Windows, not implemented
+    yet -- should also surface as a client error, not run zero checks
+    silently or crash.
+    """
+    from invariant_assessment.facts import SystemFacts
+
+    def fake_collect_facts(target):
+        return SystemFacts(
+            os_id="windows", os_version_id="2022", sshd_config={}, file_stats={}
+        )
+
+    monkeypatch.setattr("invariant_assessment.api.collect_facts", fake_collect_facts)
+    resp = client.post("/assessment/run", params={"target": "some-windows-target"})
+    assert resp.status_code == 422
+    assert "windows" in resp.json()["detail"]

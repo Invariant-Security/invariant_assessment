@@ -12,8 +12,9 @@ line in the collection script) -- individual Check.evaluate()/evidence()
 functions in invariant.assessment never run their own docker exec.
 """
 
-import subprocess
 from dataclasses import dataclass, field
+
+from invariant_assessment.transport import Transport
 
 # Paths every implemented Check currently needs stat() on. Grows as more
 # checks are added -- there's nothing distro-specific about this list, it's
@@ -81,6 +82,7 @@ _INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while re
 # collection failure (unlike mount/auditd, which fail structurally in an
 # unprivileged container and can't be checked here at all).
 _TEXT_BLOCKS = [
+    ("hostname_probe_raw", "===HOSTNAME===", "cat /etc/hostname 2>&1"),
     ("passwd_text", "===PASSWD===", "cat /etc/passwd 2>&1"),
     ("group_text", "===GROUP===", "cat /etc/group 2>&1"),
     ("shadow_text", "===SHADOW_TEXT===", "cat /etc/shadow 2>&1"),
@@ -355,7 +357,17 @@ def _collect_script() -> str:
     )
     return (
         f"echo '{_MARKER_OS_RELEASE}'; cat /etc/os-release 2>&1; "
-        f"echo '{_MARKER_SSHD_CONFIG}'; sshd -T 2>&1; "
+        # Absolute path, not bare `sshd` -- confirmed live against a real
+        # SSH-reached host (unprivileged, non-login shell): PATH there is
+        # just /usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games,
+        # no /sbin or /usr/sbin (same gap test_transport.py's own docstring
+        # already documented for audit tools). A bare `sshd -T` failed with
+        # "command not found" on a host where sshd was genuinely installed
+        # and actively serving this very connection -- misread as ABSENT
+        # instead of the real answer (present, but this unprivileged user
+        # can't read the host keys sshd -T needs, i.e. UNKNOWN). Debian/
+        # Ubuntu (the only supported family) always ships sshd at this path.
+        f"echo '{_MARKER_SSHD_CONFIG}'; /usr/sbin/sshd -T 2>&1; "
         f"{text_commands}; "
         f"{stat_commands}"
     )
@@ -375,6 +387,7 @@ class SystemFacts:
     os_version_id: str | None
     sshd_config: dict[str, str]  # lowercased directive -> value
     file_stats: dict[str, FileStat]  # path -> FileStat
+    hostname_probe_raw: str = ""
     passwd_text: str = ""
     group_text: str = ""
     shadow_text: str = ""
@@ -410,6 +423,12 @@ class SystemFacts:
     audit_rules_sync_text: str = ""
     mounts_text: str = ""
     container_detection_text: str = ""
+    # Raw `sshd -T` probe output, same slice of text parse_sshd_config()
+    # already reduces to sshd_config -- kept here too because a parsed
+    # empty dict is ambiguous (binary missing vs. permission error vs.
+    # broken config all produce "no directives parsed"), and distinguishing
+    # those matters downstream (invariant_api's SSH applicability logic).
+    sshd_probe_raw: str = ""
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -440,6 +459,20 @@ def parse_sshd_config(text: str) -> dict[str, str]:
         directive, value = parts
         directives[directive.lower()] = value.strip()
     return directives
+
+
+def clean_hostname(raw: str) -> str | None:
+    """`cat /etc/hostname` succeeding prints exactly one line, no
+    whitespace. Any failure (missing file, permission denied) produces
+    multi-word error text instead -- the same "recognizable failure
+    shape" signal already used for sshd's probe (see _sshd_state in
+    __init__.py, and the real bug it was written to fix: never surface
+    error text as if it were real data).
+    """
+    candidate = raw.strip()
+    if not candidate or " " in candidate or "\n" in candidate:
+        return None
+    return candidate
 
 
 def _parse_installed_packages(text: str) -> set[str]:
@@ -510,7 +543,9 @@ def _parse_collect_output(output: str) -> SystemFacts:
         os_id=os_release.get("ID"),
         os_version_id=os_release.get("VERSION_ID"),
         sshd_config=sshd_config,
+        sshd_probe_raw=segments[_MARKER_SSHD_CONFIG],
         file_stats=file_stats,
+        hostname_probe_raw=text_values["hostname_probe_raw"],
         passwd_text=text_values["passwd_text"],
         group_text=text_values["group_text"],
         shadow_text=text_values["shadow_text"],
@@ -549,18 +584,16 @@ def _parse_collect_output(output: str) -> SystemFacts:
     )
 
 
-def collect_facts(target: str) -> SystemFacts:
-    """Runs one compound command inside the target via `docker exec` and
-    parses its output into a SystemFacts snapshot -- everything a Check
-    needs, gathered in a single round trip.
+def collect_facts(transport: Transport) -> SystemFacts:
+    """Runs the collection script through the given transport (Docker
+    exec or SSH) and parses its output into a SystemFacts snapshot --
+    everything a Check needs, gathered in a single round trip. Fully
+    transport-agnostic: this function has never cared *how* the script
+    reached the target, only that it gets combined stdout+stderr text
+    back.
     """
-    result = subprocess.run(
-        ["docker", "exec", target, "sh", "-c", _collect_script()],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return _parse_collect_output(result.stdout + result.stderr)
+    output = transport.run(_collect_script())
+    return _parse_collect_output(output)
 
 
 _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods")
