@@ -14,13 +14,13 @@ def test_returns_containers_from_list_docker_containers(monkeypatch):
     monkeypatch.setattr(
         api,
         "list_docker_containers",
-        lambda: [{"name": "web-1", "image": "nginx:1.27-alpine"}],
+        lambda: [{"name": "web-1", "image": "nginx:1.27-alpine", "id": "a1b2c3d4e5f6"}],
     )
 
     response = client.get("/assessment/containers")
 
     assert response.status_code == 200
-    assert response.json() == [{"name": "web-1", "image": "nginx:1.27-alpine"}]
+    assert response.json() == [{"name": "web-1", "image": "nginx:1.27-alpine", "id": "a1b2c3d4e5f6"}]
 
 
 def test_empty_list_returns_empty_array(monkeypatch):
