@@ -164,3 +164,34 @@ def test_audit_conf_text_stat_command_includes_all_six_audit_tools():
     (_, _, cmd), = [block for block in _TEXT_BLOCKS if block[0] == "audit_conf_text"]
     for tool in ("auditctl", "aureport", "ausearch", "auditd", "augenrules", "autrace"):
         assert f"/sbin/{tool}" in cmd
+
+
+def test_audit_conf_text_logdir_never_falls_back_to_cwd_when_auditd_is_absent(tmp_path):
+    """Regression for a real leak found via the public demo snapshot: when
+    /etc/audit/auditd.conf is missing (or has no log_file directive, same
+    as "auditd not installed"), the LOGDIR section used to run `dirname ""`
+    -- which returns "." (the shell's cwd), not empty -- so the guard below
+    it passed and `find .` listed whatever was in the docker-exec session's
+    working directory (the target's WORKDIR) instead of reporting
+    LOGDIR_NOT_FOUND. Confirmed live on a container without auditd: real
+    project files (to-do.md, alembic.ini, ...) showed up as "audit log
+    files". This runs the actual collected shell fragment (not a container,
+    just `sh -c`) from a scratch cwd salted with decoy files that must never
+    appear in the output.
+    """
+    import subprocess
+
+    (_, marker, cmd), = [block for block in _TEXT_BLOCKS if block[0] == "audit_conf_text"]
+
+    decoy = tmp_path / "top-secret-project-file.md"
+    decoy.write_text("should never be listed")
+
+    result = subprocess.run(["sh", "-c", cmd], cwd=tmp_path, capture_output=True, text=True, timeout=10)
+    output = result.stdout
+
+    assert "LOGDIR_NOT_FOUND" in output
+    assert "top-secret-project-file.md" not in output
+    # marker itself is just the section header used to slice the real
+    # collect_script() output -- sanity-check it's actually present so this
+    # test would fail loudly if _TEXT_BLOCKS' shape ever changes underneath it.
+    assert marker
