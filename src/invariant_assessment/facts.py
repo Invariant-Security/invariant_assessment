@@ -214,8 +214,17 @@ _TEXT_BLOCKS = [
         "find /etc/audit/ -type f \\( -name '*.conf' -o -name '*.rules' \\) "
         "-printf 'mode=%m uid=%U gid=%G gname=%g path=%p\\n' 2>&1; "
         "echo '---LOGDIR---'; "
-        "l_dir=\"$(dirname \"$(awk -F= '$1 ~ /^[[:space:]]*log_file[[:space:]]*$/ "
-        "{print $2}' /etc/audit/auditd.conf 2>/dev/null | xargs 2>/dev/null)\" 2>/dev/null)\"; "
+        "log_file_path=\"$(awk -F= '$1 ~ /^[[:space:]]*log_file[[:space:]]*$/ "
+        "{print $2}' /etc/audit/auditd.conf 2>/dev/null | xargs 2>/dev/null)\"; "
+        # Bug fixed here (found via a real leak on a container without
+        # auditd installed): `dirname ""` returns "." (the shell's cwd,
+        # normally the image's WORKDIR), not empty -- feeding that
+        # straight into `dirname` when log_file is unset/auditd is
+        # absent made the guard below pass and `find` list whatever
+        # happened to be in the container's working directory instead
+        # of reporting LOGDIR_NOT_FOUND. Never call `dirname` at all
+        # when log_file_path came back empty.
+        "if [ -n \"$log_file_path\" ]; then l_dir=\"$(dirname \"$log_file_path\" 2>/dev/null)\"; else l_dir=\"\"; fi; "
         "if [ -n \"$l_dir\" ] && [ -d \"$l_dir\" ]; then "
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' \"$l_dir\" 2>&1; "
         "echo '---LOGFILES---'; "

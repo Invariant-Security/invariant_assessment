@@ -71,15 +71,29 @@ class DockerExecTransport:
 
 
 def list_docker_containers() -> list[dict]:
-    """Names+images of every running container reachable by this host's
-    Docker socket -- what DockerExecTransport's `target` can point at.
-    Same `docker` CLI dependency as DockerExecTransport.run(), no Docker
-    SDK needed for a one-shot `docker ps`.
+    """Names+images+IDs+demo-label of every running container reachable
+    by this host's Docker socket -- what DockerExecTransport's `target`
+    can point at. Same `docker` CLI dependency as DockerExecTransport.run(),
+    no Docker SDK needed for a one-shot `docker ps`.
+
+    `--no-trunc` is required: without it Docker truncates `{{.ID}}` to
+    12 characters, which invariant_api's demo-snapshot alias table uses
+    as a stable primary key (a rename/restart of the same container
+    must keep the same ID -- a truncated ID has a real, if small,
+    collision risk across the fleet).
+
+    `{{.Label "invariant.public-demo"}}` -- confirmed live against a
+    real Docker daemon that this reads inline from `docker ps` with no
+    extra `docker inspect` round-trip: unlabeled containers produce an
+    empty 4th field, `--label invariant.public-demo=true` produces
+    `"true"`. This is the ONLY thing that marks a container eligible
+    for the public demo snapshot (invariant_api's routes/demo_snapshot.py)
+    -- never inferred from name.
     """
     import subprocess
 
     result = subprocess.run(
-        ["docker", "ps", "--format", "{{.Names}}|{{.Image}}"],
+        ["docker", "ps", "--no-trunc", "--format", '{{.Names}}|{{.Image}}|{{.ID}}|{{.Label "invariant.public-demo"}}'],
         capture_output=True,
         text=True,
         timeout=10,
@@ -88,8 +102,10 @@ def list_docker_containers() -> list[dict]:
     for line in result.stdout.strip().splitlines():
         if not line:
             continue
-        name, _, image = line.partition("|")
-        containers.append({"name": name, "image": image})
+        name, _, rest = line.partition("|")
+        image, _, rest = rest.partition("|")
+        container_id, _, is_demo_label = rest.partition("|")
+        containers.append({"name": name, "image": image, "id": container_id, "is_demo": is_demo_label == "true"})
     return containers
 
 

@@ -32,6 +32,8 @@ def healthz() -> dict:
 class ContainerInfo(BaseModel):
     name: str
     image: str
+    id: str
+    is_demo: bool = False
 
 
 @app.get("/assessment/containers", response_model=list[ContainerInfo])
