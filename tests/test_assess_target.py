@@ -10,7 +10,7 @@ Every FAIL here is identified by `titles[0]` (the canonical wording for
 that Check), not an external_id -- this service never sees a real CIS
 external_id at all (see api.py's module docstring for why), and unlike
 the monolith's own test suite, that means no per-document drift dict is
-needed: the same 68 systemic gaps fail identically on all 6 containers
+needed: the same 70 systemic gaps fail identically on all 6 containers
 (none of the 6 Dockerfiles were ever hardened for them -- see the
 monolith's docs/architecture/checks-backlog.md for the "why" of each),
 plus one extra title on the 2 "ssh-bad" containers and one extra on the
@@ -45,7 +45,9 @@ _SYSTEMIC_FAILS = {
     "Ensure actions as another user are always logged",
     "Ensure audit configuration files group owner is configured",
     "Ensure audit configuration files owner is configured",
+    "Ensure audit log files group owner is configured",
     "Ensure audit log files mode is configured",
+    "Ensure audit log files owner is configured",
     "Ensure audit log storage size is configured",
     "Ensure audit logs are not automatically deleted",
     "Ensure audit tools group owner is configured",
