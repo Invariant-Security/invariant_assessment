@@ -4,13 +4,14 @@ integration tests. Mirrors the exact os_id/os_version_id -> testable gate
 _evaluate_all() uses for the real assessment, without running any checks.
 """
 
+from conftest import AUTH_HEADERS
 from fastapi.testclient import TestClient
 
 from invariant_assessment import api
 from invariant_assessment.api import app
 from invariant_assessment.facts import SystemFacts
 
-client = TestClient(app)
+client = TestClient(app, headers=AUTH_HEADERS)
 
 
 def _facts(os_id=None, os_version_id=None, hostname_probe_raw="") -> SystemFacts:

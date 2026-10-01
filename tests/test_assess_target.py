@@ -18,13 +18,14 @@ plus one extra title on the 2 "ssh-bad" containers and one extra on the
 """
 
 import pytest
+from conftest import AUTH_HEADERS
 from fastapi.testclient import TestClient
 
 from invariant_assessment.api import app
 
 pytestmark = pytest.mark.integration
 
-client = TestClient(app)
+client = TestClient(app, headers=AUTH_HEADERS)
 
 # The 68 titles that fail identically on all 6 containers -- none of the
 # demo/test Dockerfiles were ever hardened for these (missing packages:
