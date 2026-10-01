@@ -9,7 +9,7 @@ CIS level/scored) is invariant_api's job, which owns the database.
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from invariant_assessment import CHECKS, document_slug_for_os, family_for_os
+from invariant_assessment import CHECKS, document_slug_for_os, family_for_os, internal_auth
 from invariant_assessment.facts import clean_hostname, collect_facts
 from invariant_assessment.observability import timed
 from invariant_assessment.transport import (
@@ -22,6 +22,7 @@ from invariant_assessment.transport import (
 )
 
 app = FastAPI(title="Invariant Assessment")
+internal_auth.install(app)
 
 
 @app.get("/healthz")

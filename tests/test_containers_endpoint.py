@@ -2,12 +2,13 @@
 list_docker_containers so this runs without a real Docker socket.
 """
 
+from conftest import AUTH_HEADERS
 from fastapi.testclient import TestClient
 
 from invariant_assessment import api
 from invariant_assessment.api import app
 
-client = TestClient(app)
+client = TestClient(app, headers=AUTH_HEADERS)
 
 
 def test_returns_containers_from_list_docker_containers(monkeypatch):

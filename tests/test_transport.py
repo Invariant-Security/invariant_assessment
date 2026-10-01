@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import paramiko
 import pytest
+from conftest import AUTH_HEADERS
 from fastapi.testclient import TestClient
 
 from invariant_assessment.api import app
@@ -33,7 +34,7 @@ from invariant_assessment.transport import (
 
 pytestmark = pytest.mark.integration
 
-client = TestClient(app)
+client = TestClient(app, headers=AUTH_HEADERS)
 
 _SSH_TARGET_CONTAINER = "invariant-assessment-test-ssh-target"
 _SSH_HOST = "127.0.0.1"

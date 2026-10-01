@@ -6,12 +6,13 @@ LookupError that neither endpoint used to catch, surfacing as an
 unhandled 500 instead of a clean error.
 """
 
+from conftest import AUTH_HEADERS
 from fastapi.testclient import TestClient
 
 from invariant_assessment import api
 from invariant_assessment.api import app
 
-client = TestClient(app)
+client = TestClient(app, headers=AUTH_HEADERS)
 
 
 def test_collection_failure_returns_422_not_500(monkeypatch):
