@@ -1,15 +1,20 @@
-# Roda no runner self-hosted dedicado deste repo (registrado direto nele,
-# não a nível de organização -- mesmo padrão já usado pelos outros
-# projetos desta VPS). Atualiza SÓ o container `assessment` na stack
-# compartilhada `invariant-next` (definida em invariant_api's
-# docker-compose.yml) -- api/ingestion/web nem percebem.
+# deploy: publica só o serviço `assessment` na stack invariant-next (invariantsec.org).
 #
-# Essa stack ainda NÃO está ligada ao roteamento público (nginx-proxy) --
-# valida em paralelo ao monólito (Strangler Fig), não substitui produção.
+# Só roda DEPOIS do CI verde (workflow_run do `ci`), e só para um push neste
+# repo -- nunca para PR nem fork. O código é posto exatamente no commit que o
+# CI testou (head_sha); se esse commit já não for a ponta de `main`, o
+# deploy é pulado (o CI do commit mais novo publica o dele), para um CI
+# antigo terminando depois nunca voltar o ambiente para trás.
+#
+# Atenção: o GitHub sempre usa a versão DESTE arquivo que está na branch
+# padrão (main), também para o deploy do dev. Mudança aqui só vale depois de
+# chegar ao main.
 name: deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
 
 concurrency:
@@ -19,22 +24,42 @@ concurrency:
 jobs:
   deploy:
     name: deploy
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: [self-hosted, vps-prod]
     env:
       SRC_DIR: /srv/projects/publicado/invariant/prod/invariant_assessment
       STACK_DIR: /srv/projects/publicado/invariant/prod/invariant_api
+      BRANCH: main
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      - name: Atualizar código
+      - name: Atualizar código para o commit que passou no CI
+        id: code
         run: |
           git config --global --add safe.directory "$SRC_DIR"
           cd "$SRC_DIR"
-          git fetch origin main
-          git reset --hard origin/main
+          git fetch origin "$BRANCH"
+          tip="$(git rev-parse "origin/$BRANCH")"
+          if [ "$tip" != "$DEPLOY_SHA" ]; then
+            echo "::notice::$DEPLOY_SHA já não é a ponta de $BRANCH ($tip); o deploy fica com o CI do commit mais novo."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git reset --hard "$DEPLOY_SHA"
 
       - name: Reconstruir e subir só este serviço
+        if: steps.code.outputs.skip != 'true'
         run: |
           cd "$STACK_DIR"
           docker compose up -d --build --wait --wait-timeout 180 assessment
+
+      - name: Smoke
+        if: steps.code.outputs.skip != 'true'
+        run: |
+          cd "$STACK_DIR"
+          docker compose exec -T assessment python -c "import urllib.request as u; [u.urlopen('http://127.0.0.1:8000' + p, timeout=10) for p in ('/healthz',)]"
 
       - name: Logs em caso de falha
         if: failure()
