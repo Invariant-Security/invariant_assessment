@@ -19,7 +19,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      # Mesmo lock da imagem (Dockerfile); só as ferramentas de teste
+      # (extra `dev`) continuam sem pin.
+      - run: pip install --require-hashes --no-deps -r requirements.lock
+      - run: pip install --no-deps -e . && pip install pytest pytest-cov httpx2
 
       - name: Build and start the 6 fixed test containers
         run: docker compose -f tests/fixtures/docker-compose.yml up -d --build --wait --wait-timeout 120
