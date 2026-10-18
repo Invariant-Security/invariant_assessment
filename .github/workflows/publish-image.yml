@@ -1,11 +1,24 @@
 # Net-new capacidade de CI, ver o mesmo comentário em invariant_api's
 # publish-image.yml -- publica a imagem que docker-compose.appliance.yml
 # referencia via `image:`.
+#
+# Dois gatilhos:
+#  - push de tag v*: tag da versão + latest (como sempre).
+#  - workflow_run do `ci` em dev/main: UMA tag <branch>-<sha>, para o k8s
+#    puxar por digest. Construída no GitHub, nunca na VPS.
+#
+# Atenção: o GitHub sempre usa a versão DESTE arquivo que está na branch
+# padrão (main) para workflow_run. O gatilho só passa a valer depois de
+# chegar ao main.
 name: publish-image
 
 on:
   push:
     tags: ["v*"]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -13,18 +26,48 @@ permissions:
 
 jobs:
   publish:
+    # Mesmas travas dos deploy*.yml: só CI verde, de push, neste repo.
+    if: >-
+      github.event_name != 'workflow_run' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Vazio (default) no push de tag; no commit que o CI testou no workflow_run.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - id: tags
+        env:
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          img=ghcr.io/invariant-security/invariant-assessment
+          {
+            echo "list<<EOF"
+            if [ "$EVENT" = workflow_run ]; then
+              echo "$img:$BRANCH-$SHA"
+            else
+              echo "$img:$REF_NAME"
+              echo "$img:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/invariant-security/invariant-assessment:${{ github.ref_name }}
-            ghcr.io/invariant-security/invariant-assessment:latest
+          tags: ${{ steps.tags.outputs.list }}
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "ghcr.io/invariant-security/invariant-assessment@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
