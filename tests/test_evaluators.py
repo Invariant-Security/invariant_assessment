@@ -187,7 +187,7 @@ def test_sshd_state_not_fooled_by_a_single_line_error_that_happens_to_parse():
 
 def test_sshd_state_absent_on_real_command_not_found_error():
     # Exact text observed live against a real container with no sshd
-    # package (tamois, babybet-db): `sh -c "sshd -T 2>&1"` -> exit 127.
+    # package (app-web, app-db): `sh -c "sshd -T 2>&1"` -> exit 127.
     facts = _facts(sshd_config={}, sshd_probe_raw="sh: 1: sshd: not found")
     assert _sshd_state(facts) == "absent"
 

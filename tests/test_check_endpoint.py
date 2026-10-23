@@ -23,7 +23,7 @@ def _facts(os_id=None, os_version_id=None, hostname_probe_raw="") -> SystemFacts
 def test_supported_os_is_testable(monkeypatch):
     monkeypatch.setattr(api, "collect_facts", lambda transport: _facts("debian", "12"))
 
-    response = client.post("/assessment/check", params={"target": "tamois"})
+    response = client.post("/assessment/check", params={"target": "app-web"})
 
     assert response.status_code == 200
     body = response.json()
@@ -41,7 +41,7 @@ def test_supported_os_is_testable(monkeypatch):
 def test_unsupported_os_returns_clean_reason_not_raw_exception_text(monkeypatch):
     monkeypatch.setattr(api, "collect_facts", lambda transport: _facts("alpine", "3.23"))
 
-    response = client.post("/assessment/check", params={"target": "estudeoab-backend-1"})
+    response = client.post("/assessment/check", params={"target": "app-backend-1"})
 
     assert response.status_code == 200
     body = response.json()
@@ -87,7 +87,7 @@ def test_hostname_surfaces_when_collected_cleanly(monkeypatch):
         api, "collect_facts", lambda transport: _facts("debian", "12", hostname_probe_raw="invariant-demo-linux")
     )
 
-    response = client.post("/assessment/check", params={"target": "tamois"})
+    response = client.post("/assessment/check", params={"target": "app-web"})
 
     assert response.json()["hostname"] == "invariant-demo-linux"
 
@@ -99,7 +99,7 @@ def test_hostname_is_none_when_probe_looks_like_an_error(monkeypatch):
         lambda transport: _facts("debian", "12", hostname_probe_raw="cat: /etc/hostname: No such file or directory"),
     )
 
-    response = client.post("/assessment/check", params={"target": "tamois"})
+    response = client.post("/assessment/check", params={"target": "app-web"})
 
     assert response.json()["hostname"] is None
 
@@ -107,6 +107,6 @@ def test_hostname_is_none_when_probe_looks_like_an_error(monkeypatch):
 def test_response_is_never_cached(monkeypatch):
     monkeypatch.setattr(api, "collect_facts", lambda transport: _facts("debian", "12"))
 
-    response = client.post("/assessment/check", params={"target": "tamois"})
+    response = client.post("/assessment/check", params={"target": "app-web"})
 
     assert response.headers["cache-control"] == "no-store"
