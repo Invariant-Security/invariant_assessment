@@ -1,12 +1,11 @@
 """Integration coverage for POST /assessment/run against the 6 real
 demo/test containers (invariant-debian-baseline, etc.). Every FAIL here is
-identified by `titles[0]` (the canonical wording for that Check), not an
-external_id -- this service never sees a real external_id at all (see
-api.py's module docstring for why), so no per-document drift dict is
-needed: the same 70 systemic gaps fail identically on all 6 containers
-(none of the 6 Dockerfiles were ever hardened for them), plus one extra
-title on the 2 "ssh-bad" containers and one extra on the 2
-"permissions-bad" containers, matching each container's own story.
+identified by the Check's `check_id` -- this service never sees a real
+external_id at all (see api.py's module docstring for why): the same
+systemic gaps fail identically on all 6 containers (none of the 6
+Dockerfiles were ever hardened for them), plus one extra check on the 2
+"ssh-bad" containers and one extra on the 2 "permissions-bad" containers,
+matching each container's own story.
 """
 
 import pytest
@@ -19,81 +18,81 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(app, headers=AUTH_HEADERS)
 
-# The 68 titles that fail identically on all 6 containers -- none of the
+# The 68 check ids that fail identically on all 6 containers -- none of the
 # demo/test Dockerfiles were ever hardened for these (missing packages:
-# auditd/AIDE/ufw/sudo/libpam-pwquality; no real audit rules loaded; no
+# auditd/AIDE/ufw/sudo/libpam-pwquality; no audit rules loaded; no
 # systemd/journald PID 1; no bootloader; no separate /var partition; etc.).
 _SYSTEMIC_FAILS = {
-    "Ensure AIDE is installed",
-    "Ensure a single time synchronization daemon is in use",
-    "Ensure access to /etc/cron.d is configured",
-    "Ensure access to /etc/cron.daily is configured",
-    "Ensure access to /etc/cron.hourly is configured",
-    "Ensure access to /etc/cron.monthly is configured",
-    "Ensure access to /etc/cron.weekly is configured",
-    "Ensure access to /etc/crontab is configured",
-    "Ensure access to /etc/ssh/sshd_config is configured",
-    "Ensure access to bootloader config is configured",
-    "Ensure access to the su command is restricted",
-    "Ensure actions as another user are always logged",
-    "Ensure audit configuration files group owner is configured",
-    "Ensure audit configuration files owner is configured",
-    "Ensure audit log files group owner is configured",
-    "Ensure audit log files mode is configured",
-    "Ensure audit log files owner is configured",
-    "Ensure audit log storage size is configured",
-    "Ensure audit logs are not automatically deleted",
-    "Ensure audit tools group owner is configured",
-    "Ensure audit tools mode is configured",
-    "Ensure audit tools owner is configured",
-    "Ensure auditd packages are installed",
-    "Ensure auditd service is enabled and active",
-    "Ensure default user umask is configured",
-    "Ensure events that modify date and time information are collected",
-    "Ensure events that modify the sudo log file are collected",
-    "Ensure events that modify the system's Mandatory Access Controls are collected",
-    "Ensure journald Compress is configured",
-    "Ensure journald Storage is configured",
-    "Ensure journald log file rotation is configured",
-    "Ensure login and logout events are collected",
-    "Ensure minimum password length is configured",
-    "Ensure pam_faillock module is enabled",
-    "Ensure pam_pwhistory includes use_authtok",
-    "Ensure pam_pwhistory module is enabled",
-    "Ensure pam_pwquality module is enabled",
-    "Ensure pam_unix does not include nullok",
-    "Ensure pam_unix includes use_authtok",
-    "Ensure password complexity is configured",
-    "Ensure password expiration is configured",
-    "Ensure password failed attempts lockout includes root account",
-    "Ensure password history is enforced for the root user",
-    "Ensure password history remember is configured",
-    "Ensure password maximum sequential characters is configured",
-    "Ensure password number of changed characters is configured",
-    "Ensure password quality is enforced for the root user",
-    "Ensure password same consecutive characters is configured",
-    "Ensure separate partition exists for /var",
-    "Ensure session initiation information is collected",
-    "Ensure sshd Banner is configured",
-    "Ensure sshd Ciphers are configured",
-    "Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured",
-    "Ensure sshd DisableForwarding is enabled",
-    "Ensure sshd MACs are configured",
-    "Ensure sshd MaxAuthTries is configured",
-    "Ensure sshd MaxStartups is configured",
-    "Ensure sshd access is configured",
-    "Ensure successful file system mounts are collected",
-    "Ensure sudo commands use pty",
-    "Ensure sudo is installed",
-    "Ensure sudo log file exists",
-    "Ensure system is disabled when audit logs are full",
-    "Ensure system warns when audit logs are low on space",
-    "Ensure systemd-timesyncd configured with authorized timeserver",
-    "Ensure the audit configuration is immutable",
-    "Ensure the audit log file directory mode is configured",
-    "Ensure the running and on disk configuration is the same",
-    "Ensure ufw is installed",
-    "Ensure unsuccessful file access attempts are collected",
+    "aide_installed",
+    "single_time_sync_daemon",
+    "cron_d_permissions",
+    "cron_daily_permissions",
+    "cron_hourly_permissions",
+    "cron_monthly_permissions",
+    "cron_weekly_permissions",
+    "etc_crontab_permissions",
+    "etc_ssh_sshd_config_permissions",
+    "bootloader_config_permissions",
+    "su_restricted",
+    "user_emulation_logged",
+    "audit_conf_files_group_owner",
+    "audit_conf_files_owner",
+    "audit_log_files_group_owner",
+    "audit_log_files_mode",
+    "audit_log_files_owner",
+    "audit_log_storage_size",
+    "audit_logs_not_auto_deleted",
+    "audit_tools_group_owner",
+    "audit_tools_mode",
+    "audit_tools_owner",
+    "auditd_packages_installed",
+    "auditd_enabled_active",
+    "default_umask",
+    "time_change_logged",
+    "sudo_log_file_logged",
+    "mac_policy_logged",
+    "journald_compress",
+    "journald_storage",
+    "journald_log_rotation",
+    "logins_logged",
+    "pwquality_minlen",
+    "pam_faillock_enabled",
+    "pam_pwhistory_use_authtok",
+    "pam_pwhistory_enabled",
+    "pam_pwquality_enabled",
+    "pam_no_nullok",
+    "pam_unix_use_authtok",
+    "pwquality_complexity",
+    "password_expiration_configured",
+    "faillock_root_lockout",
+    "pwhistory_enforce_for_root",
+    "pwhistory_remember",
+    "pwquality_max_sequence",
+    "pwquality_difok",
+    "pwquality_enforce_for_root",
+    "pwquality_max_repeat",
+    "mount_var_separate",
+    "session_logged",
+    "ssh_banner",
+    "ssh_ciphers",
+    "ssh_client_alive",
+    "ssh_disable_forwarding",
+    "ssh_macs",
+    "ssh_max_auth_tries",
+    "ssh_max_startups",
+    "ssh_allow_deny_configured",
+    "mounts_logged",
+    "sudo_use_pty",
+    "sudo_installed",
+    "sudo_log_file_exists",
+    "audit_disk_full_error_actions",
+    "audit_space_left_actions",
+    "timesyncd_authorized_timeserver",
+    "audit_config_immutable",
+    "audit_log_dir_mode",
+    "audit_rules_running_matches_disk",
+    "ufw_installed",
+    "unsuccessful_file_access_logged",
 }
 
 
@@ -103,12 +102,12 @@ def _assert_fails_only(target: str, expected_extra: set[str]) -> None:
     data = resp.json()
 
     expected = _SYSTEMIC_FAILS | expected_extra
-    statuses = {r["titles"][0]: r["status"] for r in data["results"]}
+    statuses = {r["check_id"]: r["status"] for r in data["results"]}
 
     assert len(statuses) == 199
-    for title in expected:
-        assert statuses[title] == "FAIL", f"expected {title!r} to FAIL, got {statuses[title]!r}"
-    assert all(status == "PASS" for title, status in statuses.items() if title not in expected)
+    for check_id in expected:
+        assert statuses[check_id] == "FAIL", f"expected {check_id!r} to FAIL, got {statuses[check_id]!r}"
+    assert all(status == "PASS" for check_id, status in statuses.items() if check_id not in expected)
 
 
 def test_debian_baseline_fails_only_systemic_gaps():
@@ -116,12 +115,12 @@ def test_debian_baseline_fails_only_systemic_gaps():
 
 
 def test_debian_ssh_bad_fails_permit_root_login_too():
-    _assert_fails_only("invariant-debian-ssh-bad", {"Ensure sshd PermitRootLogin is disabled"})
+    _assert_fails_only("invariant-debian-ssh-bad", {"ssh_permit_root_login"})
 
 
 def test_debian_permissions_bad_fails_shadow_permissions_too():
     _assert_fails_only(
-        "invariant-debian-permissions-bad", {"Ensure permissions on /etc/shadow are configured"}
+        "invariant-debian-permissions-bad", {"etc_shadow_permissions"}
     )
 
 
@@ -130,12 +129,12 @@ def test_ubuntu_baseline_fails_only_systemic_gaps():
 
 
 def test_ubuntu_ssh_bad_fails_permit_root_login_too():
-    _assert_fails_only("invariant-ubuntu-ssh-bad", {"Ensure sshd PermitRootLogin is disabled"})
+    _assert_fails_only("invariant-ubuntu-ssh-bad", {"ssh_permit_root_login"})
 
 
 def test_ubuntu_permissions_bad_fails_shadow_permissions_too():
     _assert_fails_only(
-        "invariant-ubuntu-permissions-bad", {"Ensure permissions on /etc/shadow are configured"}
+        "invariant-ubuntu-permissions-bad", {"etc_shadow_permissions"}
     )
 
 

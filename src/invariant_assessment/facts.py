@@ -168,9 +168,8 @@ _TEXT_BLOCKS = [
         "else printf 'NODIR:%s\\n' \"$l_p\"; fi; done",
     ),
     # Used by the audit-processes-prior-to-auditd check (Group U below): lists
-    # `linux` lines of any grub.cfg under /boot that lack `audit=1`
-    # (`find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} +
-    # | grep -v 'audit=1'`). A container has no /boot/grub/grub.cfg at all --
+    # `linux` lines of any grub.cfg under /boot that lack `audit=1`. A container
+    # has no /boot/grub/grub.cfg at all --
     # `find` matches zero files, the whole pipe naturally produces no output,
     # same vacuous-PASS precedent as the kernel-module checks above (grep
     # against something that isn't there correctly reports "nothing to flag").
@@ -230,9 +229,8 @@ _TEXT_BLOCKS = [
     # text).
     ("timesyncd_text", "===TIMESYNCD===", "cat /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf 2>&1"),
     # systemd-journal-remote must not be in use (checks-backlog.md Group B):
-    # `systemctl is-enabled ...socket ...service | grep -P '^enabled'` then the
-    # same with `is-active`/`^active`; nothing returned from either is the PASS
-    # condition. These containers don't run real systemd (PID 1 isn't systemd,
+    # lists the socket/service units if enabled, then if active; nothing
+    # returned from either is the PASS condition. These containers don't run real systemd (PID 1 isn't systemd,
     # same gap documented for Group C), so `systemctl` itself errors out here --
     # but that error is exactly "nothing matching ^enabled/^active", the literal
     # PASS condition, not an approximation of it (contrast Group C's
@@ -582,10 +580,10 @@ _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods")
 def is_running_in_container(facts: SystemFacts) -> bool:
     """Best-effort "is this target a container" signal, used only by
     demo.sh's report (scripts/demo/report.py) to decide whether a FAIL on a
-    container-impossible title (no bootloader, no functioning systemd/
+    container-impossible check (no bootloader, no functioning systemd/
     journald, audit subsystem often not fully functional without extra
     capabilities) is an environment limitation or a real gap -- on a
-    bare-metal/VM target the same title is just a normal FAIL, no automatic
+    bare-metal/VM target the same check is just a normal FAIL, no automatic
     excuse. Not used by any real Check or by assess_target() itself.
 
     True if /.dockerenv exists (Docker's own marker file) or /proc/1/cgroup

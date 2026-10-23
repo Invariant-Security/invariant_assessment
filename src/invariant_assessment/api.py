@@ -1,7 +1,7 @@
 """Thin FastAPI wrapper over invariant_assessment's own evaluation engine
 (CHECKS/document_slug_for_os) -- exposes exactly the shape invariant_api's
 routes/assess.py needs, and nothing else. No Postgres here, ever: this
-service only knows "which check titles passed/failed, with what
+service only knows "which check ids passed/failed, with what
 evidence" -- turning that into a real Finding (external_id, remediation,
 level, scored flag) is invariant_api's job, which owns the database.
 """
@@ -49,7 +49,7 @@ def containers() -> list[ContainerInfo]:
 
 
 class CheckResult(BaseModel):
-    titles: list[str]
+    check_id: str
     status: str
     evidence: str
 
@@ -88,7 +88,7 @@ def _evaluate_all(facts, target_label: str) -> RunResponse:
 
     results = [
         CheckResult(
-            titles=check.titles,
+            check_id=check.id,
             status="PASS" if check.evaluate(facts) else "FAIL",
             evidence=check.evidence(facts),
         )

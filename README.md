@@ -1,9 +1,10 @@
 # invariant_assessment
 
-Evaluates a target's collected system facts (`docker exec`) against every
-implemented CIS control. No Postgres access -- returns raw check
-titles/status/evidence; `invariant_api` joins that against real CIS
-controls to build a `Finding`.
+Evaluates a target's collected system facts (`docker exec` or SSH) against
+every implemented hardening check (compatible with the CIS Benchmarks for
+Debian and Ubuntu). No Postgres access -- returns each check's own `check_id`
+with status/evidence; `invariant_api` maps the id to the matching control to
+build a `Finding`.
 
 Extracted from the `Invariant-Security/Invariant` monolith
 (`src/invariant/assessment/`) as part of its split into `invariant_*`
@@ -16,7 +17,7 @@ exposed over HTTP instead of called in-process) changed.
 - `GET /healthz`
 - `POST /assessment/run?target=<container-name>` -- one `docker exec`
   round trip, then every `CHECKS` entry evaluated against that snapshot.
-  Returns `{"document": "...", "results": [{"titles": [...], "status":
+  Returns `{"document": "...", "results": [{"check_id": "...", "status":
   "PASS"|"FAIL", "evidence": "..."}]}`.
 
 ## Development

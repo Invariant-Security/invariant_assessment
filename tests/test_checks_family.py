@@ -25,7 +25,7 @@ def test_family_for_os_unknown_raises_lookuperror():
 
 def test_synthetic_second_family_is_excluded_by_filter():
     synthetic_check = Check(
-        titles=["Synthetic Windows Check"],
+        id="synthetic_windows_check",
         evaluate=lambda f: True,
         evidence=lambda f: "n/a",
         family="windows",

@@ -77,7 +77,7 @@ def _evidence_ssh_permit_root_login(facts: SystemFacts) -> str:
     return f"sshd_config: PermitRootLogin {value}"
 
 
-def _evaluate_shadow_permissions(facts: SystemFacts) -> bool:
+def _evaluate_etc_shadow_permissions(facts: SystemFacts) -> bool:
     """Mode 640 or more restrictive, uid 0/root, gid 0/root or the shadow group."""
     stat = facts.file_stats.get("/etc/shadow")
     if stat is None or stat.mode is None:
@@ -85,7 +85,7 @@ def _evaluate_shadow_permissions(facts: SystemFacts) -> bool:
     return stat.mode <= 0o640 and stat.uid == 0 and stat.gname in ("root", "shadow")
 
 
-def _evidence_shadow_permissions(facts: SystemFacts) -> str:
+def _evidence_etc_shadow_permissions(facts: SystemFacts) -> str:
     stat = facts.file_stats.get("/etc/shadow")
     if stat is None or stat.mode is None:
         return "/etc/shadow: could not stat"
@@ -218,11 +218,11 @@ def _evaluate_etc_shells_permissions(facts: SystemFacts) -> bool:
 _evidence_etc_shells_permissions = _evidence_for_stat("/etc/shells")
 
 
-def _evaluate_sshd_config_permissions(facts: SystemFacts) -> bool:
+def _evaluate_etc_ssh_sshd_config_permissions(facts: SystemFacts) -> bool:
     return _permissions_ok(facts, "/etc/ssh/sshd_config", 0o600, ("root",))
 
 
-_evidence_sshd_config_permissions = _evidence_for_stat("/etc/ssh/sshd_config")
+_evidence_etc_ssh_sshd_config_permissions = _evidence_for_stat("/etc/ssh/sshd_config")
 
 
 def _passwd_fields(passwd_text: str) -> list[list[str]]:
@@ -455,13 +455,13 @@ def _evidence_interactive_user_dotfiles(facts: SystemFacts) -> str:
     )
 
 
-def _evaluate_only_root_group_has_gid0(facts: SystemFacts) -> bool:
+def _evaluate_root_only_gid0_group(facts: SystemFacts) -> bool:
     """No group other than root may have GID 0 in /etc/group."""
     gid0_groups = [fields[0] for fields in _group_fields(facts.group_text) if fields[2] == "0"]
     return gid0_groups == ["root"]
 
 
-def _evidence_only_root_group_has_gid0(facts: SystemFacts) -> str:
+def _evidence_root_only_gid0_group(facts: SystemFacts) -> str:
     gid0_groups = [fields[0] for fields in _group_fields(facts.group_text) if fields[2] == "0"]
     return f"/etc/group: GID 0 assigned to: {', '.join(gid0_groups) or '<none>'}"
 
@@ -736,7 +736,7 @@ def _pam_faillock_lines(facts: SystemFacts) -> list[str]:
     return [line.strip() for line in facts.pam_common_auth.splitlines() if "pam_faillock.so" in line]
 
 
-def _evaluate_password_unlock_time(facts: SystemFacts) -> bool:
+def _evaluate_faillock_unlock_time(facts: SystemFacts) -> bool:
     """faillock.conf's unlock_time must be 0 (never) or >= 900 (15 minutes) if set
     at all -- absent is acceptable. AND, if pam_faillock.so's own unlock_time=
     argument is set inline on common-auth, it must not fall in the disallowed
@@ -753,13 +753,13 @@ def _evaluate_password_unlock_time(facts: SystemFacts) -> bool:
     return not any(_FAILLOCK_UNLOCK_TIME_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
 
 
-def _evidence_password_unlock_time(facts: SystemFacts) -> str:
+def _evidence_faillock_unlock_time(facts: SystemFacts) -> str:
     value = parse_pwquality_conf(facts.faillock_text).get("unlock_time", "<not set>")
     pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
     return f"faillock.conf: unlock_time {value}; common-auth pam_faillock.so: {pam_lines}"
 
 
-def _evaluate_password_failed_attempts_lockout(facts: SystemFacts) -> bool:
+def _evaluate_faillock_deny(facts: SystemFacts) -> bool:
     """faillock.conf's deny must be in 1-5 if set at all (absent is acceptable,
     same precedent as the pwquality/pwhistory checks above). AND
     pam_faillock.so's own inline deny= argument, if set, must not be 0 or >= 6.
@@ -775,13 +775,13 @@ def _evaluate_password_failed_attempts_lockout(facts: SystemFacts) -> bool:
     return not any(_FAILLOCK_DENY_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
 
 
-def _evidence_password_failed_attempts_lockout(facts: SystemFacts) -> str:
+def _evidence_faillock_deny(facts: SystemFacts) -> str:
     value = parse_pwquality_conf(facts.faillock_text).get("deny", "<not set>")
     pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
     return f"faillock.conf: deny {value}; common-auth pam_faillock.so: {pam_lines}"
 
 
-def _evaluate_password_lockout_includes_root(facts: SystemFacts) -> bool:
+def _evaluate_faillock_root_lockout(facts: SystemFacts) -> bool:
     """faillock.conf must set even_deny_root and/or root_unlock_time. If
     root_unlock_time is set, it must be 0 or >= 60 (disallowed range 1-59).
     Same secondary check as the other two: if pam_faillock.so's own
@@ -802,7 +802,7 @@ def _evaluate_password_lockout_includes_root(facts: SystemFacts) -> bool:
     return not any(_FAILLOCK_ROOT_UNLOCK_TIME_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
 
 
-def _evidence_password_lockout_includes_root(facts: SystemFacts) -> str:
+def _evidence_faillock_root_lockout(facts: SystemFacts) -> str:
     directives = parse_pwquality_conf(facts.faillock_text)
     even_deny_root = "present" if "even_deny_root" in directives else "missing"
     root_unlock_time = directives.get("root_unlock_time", "<not set>")
@@ -1117,49 +1117,49 @@ def _evidence_ufw_installed(facts: SystemFacts) -> str:
 # facts.py doesn't collect systemd unit state: only the package-installed
 # condition is evaluated here, like every other package-absent check in this
 # file.
-def _evaluate_avahi_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_avahi_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "avahi-daemon")
 
 
-def _evidence_avahi_not_in_use(facts: SystemFacts) -> str:
+def _evidence_avahi_not_installed(facts: SystemFacts) -> str:
     present = "avahi-daemon" in facts.installed_packages
     return f"installed_packages: avahi-daemon {'present' if present else 'absent'}"
 
 
-def _evaluate_bluetooth_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_bluetooth_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "bluez")
 
 
-def _evidence_bluetooth_not_in_use(facts: SystemFacts) -> str:
+def _evidence_bluetooth_not_installed(facts: SystemFacts) -> str:
     present = "bluez" in facts.installed_packages
     return f"installed_packages: bluez {'present' if present else 'absent'}"
 
 
 # isc-dhcp-server was replaced by kea in newer releases (same split as
 # telnet/inetutils-telnet above). Both must be absent to PASS.
-def _evaluate_dhcp_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_dhcp_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "isc-dhcp-server", "kea")
 
 
-def _evidence_dhcp_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_dhcp_server_not_installed(facts: SystemFacts) -> str:
     present = [p for p in ("isc-dhcp-server", "kea") if p in facts.installed_packages]
     return f"installed_packages: isc-dhcp-server/kea {'present: ' + ','.join(present) if present else 'absent'}"
 
 
-def _evaluate_dns_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_dns_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "bind9")
 
 
-def _evidence_dns_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_dns_server_not_installed(facts: SystemFacts) -> str:
     present = "bind9" in facts.installed_packages
     return f"installed_packages: bind9 {'present' if present else 'absent'}"
 
 
-def _evaluate_dnsmasq_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_dnsmasq_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "dnsmasq")
 
 
-def _evidence_dnsmasq_not_in_use(facts: SystemFacts) -> str:
+def _evidence_dnsmasq_not_installed(facts: SystemFacts) -> str:
     present = "dnsmasq" in facts.installed_packages
     return f"installed_packages: dnsmasq {'present' if present else 'absent'}"
 
@@ -1167,20 +1167,20 @@ def _evidence_dnsmasq_not_in_use(facts: SystemFacts) -> str:
 # One of the supported documents describes this check with an FTP *client*
 # package list instead of vsftpd, which is treated as a documentation
 # artifact; vsftpd is checked uniformly on every target.
-def _evaluate_ftp_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_ftp_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "vsftpd")
 
 
-def _evidence_ftp_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_ftp_server_not_installed(facts: SystemFacts) -> str:
     present = "vsftpd" in facts.installed_packages
     return f"installed_packages: vsftpd {'present' if present else 'absent'}"
 
 
-def _evaluate_ldap_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_ldap_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "slapd")
 
 
-def _evidence_ldap_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_ldap_server_not_installed(facts: SystemFacts) -> str:
     present = "slapd" in facts.installed_packages
     return f"installed_packages: slapd {'present' if present else 'absent'}"
 
@@ -1188,29 +1188,29 @@ def _evidence_ldap_server_not_in_use(facts: SystemFacts) -> str:
 # Two distinct packages (IMAP and POP3 servers), not name-drift aliases
 # like isc-dhcp-server/kea above: either one present is a finding, so both
 # must be absent to PASS.
-def _evaluate_message_access_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_message_access_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "dovecot-imapd", "dovecot-pop3d")
 
 
-def _evidence_message_access_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_message_access_server_not_installed(facts: SystemFacts) -> str:
     present = [p for p in ("dovecot-imapd", "dovecot-pop3d") if p in facts.installed_packages]
     return f"installed_packages: dovecot-imapd/dovecot-pop3d {'present: ' + ','.join(present) if present else 'absent'}"
 
 
-def _evaluate_nfs_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_nfs_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "nfs-kernel-server")
 
 
-def _evidence_nfs_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_nfs_server_not_installed(facts: SystemFacts) -> str:
     present = "nfs-kernel-server" in facts.installed_packages
     return f"installed_packages: nfs-kernel-server {'present' if present else 'absent'}"
 
 
-def _evaluate_nis_server_not_in_use(facts: SystemFacts) -> bool:
+def _evaluate_nis_server_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "ypserv")
 
 
-def _evidence_nis_server_not_in_use(facts: SystemFacts) -> str:
+def _evidence_nis_server_not_installed(facts: SystemFacts) -> str:
     present = "ypserv" in facts.installed_packages
     return f"installed_packages: ypserv {'present' if present else 'absent'}"
 
@@ -1261,18 +1261,18 @@ def _evidence_for_stats(paths: list[str]) -> Callable[[SystemFacts], str]:
     return _evidence
 
 
-def _evaluate_audit_config_files_owner(facts: SystemFacts) -> bool:
+def _evaluate_audit_conf_files_owner(facts: SystemFacts) -> bool:
     return _owner_ok(facts, _AUDIT_CONFIG_PATHS, uid=0)
 
 
-_evidence_audit_config_files_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
+_evidence_audit_conf_files_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
 
 
-def _evaluate_audit_config_files_group_owner(facts: SystemFacts) -> bool:
+def _evaluate_audit_conf_files_group_owner(facts: SystemFacts) -> bool:
     return _owner_ok(facts, _AUDIT_CONFIG_PATHS, gnames=("root",))
 
 
-_evidence_audit_config_files_group_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
+_evidence_audit_conf_files_group_owner = _evidence_for_stats(_AUDIT_CONFIG_PATHS)
 
 
 def _evaluate_audit_tools_owner(facts: SystemFacts) -> bool:
@@ -1365,11 +1365,11 @@ def _evidence_sudo_log_file_exists(facts: SystemFacts) -> str:
 # 0600 ceiling for /etc/crontab and a 0700 ceiling for the five cron.*
 # directories (packaged defaults are 644/755, i.e. non-compliant out of the
 # box, the same gotcha as sshd_config's own file permissions).
-def _evaluate_crontab_permissions(facts: SystemFacts) -> bool:
+def _evaluate_etc_crontab_permissions(facts: SystemFacts) -> bool:
     return _permissions_ok(facts, "/etc/crontab", 0o600, ("root",))
 
 
-_evidence_crontab_permissions = _evidence_for_stat("/etc/crontab")
+_evidence_etc_crontab_permissions = _evidence_for_stat("/etc/crontab")
 
 
 def _evaluate_cron_hourly_permissions(facts: SystemFacts) -> bool:
@@ -1515,7 +1515,7 @@ def _evaluate_etc_motd_permissions(facts: SystemFacts) -> bool:
 def _evidence_etc_motd_permissions(facts: SystemFacts) -> str:
     stat = facts.file_stats.get("/etc/motd")
     if stat is None or stat.mode is None:
-        return "/etc/motd: absent (not configured -- passes per documented audit OR-clause)"
+        return "/etc/motd: absent (not configured -- passes: no motd file to protect)"
     return f"/etc/motd: mode={oct(stat.mode)} uid={stat.uid} gid={stat.gid}({stat.gname})"
 
 
@@ -1591,7 +1591,7 @@ def _evidence_ssh_max_startups(facts: SystemFacts) -> str:
     return f"sshd_config: MaxStartups {value}"
 
 
-def _evaluate_strong_password_hashing_algorithm(facts: SystemFacts) -> bool:
+def _evaluate_login_defs_encrypt_method(facts: SystemFacts) -> bool:
     """ENCRYPT_METHOD in /etc/login.defs must be SHA512 or yescrypt. The match is
     case-insensitive, so the value is upper-cased before comparing.
     """
@@ -1599,7 +1599,7 @@ def _evaluate_strong_password_hashing_algorithm(facts: SystemFacts) -> bool:
     return value.upper() in ("SHA512", "YESCRYPT")
 
 
-def _evidence_strong_password_hashing_algorithm(facts: SystemFacts) -> str:
+def _evidence_login_defs_encrypt_method(facts: SystemFacts) -> str:
     value = parse_login_defs(facts.login_defs_text).get("ENCRYPT_METHOD", "<not set>")
     return f"login.defs: ENCRYPT_METHOD {value}"
 
@@ -1795,7 +1795,7 @@ def _evidence_ssh_banner(facts: SystemFacts) -> str:
     return f"sshd_config: Banner {value} (directive-set only, content not verified)"
 
 
-def _evaluate_ssh_access(facts: SystemFacts) -> bool:
+def _evaluate_ssh_allow_deny_configured(facts: SystemFacts) -> bool:
     """At least one of AllowUsers/AllowGroups/DenyUsers/DenyGroups must be present
     in `sshd -T` output. The actual list is site policy, so presence of any one
     directive is the machine-checkable bar, same "configured, not judged"
@@ -1807,7 +1807,7 @@ def _evaluate_ssh_access(facts: SystemFacts) -> bool:
     )
 
 
-def _evidence_ssh_access(facts: SystemFacts) -> str:
+def _evidence_ssh_allow_deny_configured(facts: SystemFacts) -> str:
     # Unlike every other _evidence_ssh_* function, an empty sshd_config
     # here is naturally indistinguishable from "sshd present but none of
     # AllowUsers/.../DenyGroups set" -- so this one needs the explicit
@@ -2592,7 +2592,7 @@ def _evidence_kernel_module_not_available(facts: SystemFacts, module_type: str, 
 
 def _kernel_module_check(module_name: str, module_type: str) -> "Check":
     return Check(
-        titles=[f"Ensure {module_name} kernel module is not available"],
+        id=f"kernel_module_{module_name.replace('-', '_')}_not_available",
         evaluate=lambda facts, n=module_name, t=module_type: _evaluate_kernel_module_not_available(facts, t, n),
         evidence=lambda facts, n=module_name, t=module_type: _evidence_kernel_module_not_available(facts, t, n),
     )
@@ -2901,7 +2901,7 @@ def _access_rule_present(facts: SystemFacts, uid_min: int, exit_code: str) -> bo
     return _any_audit_line_matches(facts, *patterns)
 
 
-def _evaluate_unsuccessful_access_logged(facts: SystemFacts) -> bool:
+def _evaluate_unsuccessful_file_access_logged(facts: SystemFacts) -> bool:
     """With login.defs' UID_MIN, audit rules must include two separate rules --
     one with `-F exit=-EACCES`, one with `-F exit=-EPERM` -- each shaped like
     `-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F
@@ -2914,7 +2914,7 @@ def _evaluate_unsuccessful_access_logged(facts: SystemFacts) -> bool:
     return _access_rule_present(facts, uid_min, "EACCES") and _access_rule_present(facts, uid_min, "EPERM")
 
 
-def _evidence_unsuccessful_access_logged(facts: SystemFacts) -> str:
+def _evidence_unsuccessful_file_access_logged(facts: SystemFacts) -> str:
     uid_min = _uid_min(facts)
     if uid_min is None:
         return "login.defs: UID_MIN not set -- can't evaluate access audit rules"
@@ -3060,7 +3060,7 @@ def _evaluate_chrony_enabled_active(facts: SystemFacts) -> bool:
 
 def _evidence_chrony_enabled_active(facts: SystemFacts) -> str:
     if "chrony" not in facts.installed_packages:
-        return "chrony: not installed (audit is conditional on chrony being in use)"
+        return "chrony: not installed (only evaluated when chrony is in use)"
     status = _parse_systemd_service_status(facts.systemd_service_status_text)
     return f"systemctl chrony: is-enabled={status.get('chrony_enabled')!r} is-active={status.get('chrony_active')!r}"
 
@@ -3091,7 +3091,7 @@ def _evaluate_cron_enabled_active(facts: SystemFacts) -> bool:
 
 def _evidence_cron_enabled_active(facts: SystemFacts) -> str:
     if "cron" not in facts.installed_packages:
-        return "cron: not installed (audit is conditional on cron being installed)"
+        return "cron: not installed (only evaluated when cron is installed)"
     status = _parse_systemd_service_status(facts.systemd_service_status_text)
     return f"systemctl cron: is-enabled={status.get('cron_enabled')!r} is-active={status.get('cron_active')!r}"
 
@@ -3110,7 +3110,7 @@ def _evaluate_timesyncd_enabled_active(facts: SystemFacts) -> bool:
 
 def _evidence_timesyncd_enabled_active(facts: SystemFacts) -> str:
     if "systemd-timesyncd" not in facts.installed_packages:
-        return "systemd-timesyncd: not installed (audit is conditional on it being in use)"
+        return "systemd-timesyncd: not installed (only evaluated when it is in use)"
     status = _parse_systemd_service_status(facts.systemd_service_status_text)
     return f"systemctl systemd-timesyncd: is-enabled={status.get('timesyncd_enabled')!r} is-active={status.get('timesyncd_active')!r}"
 
@@ -3130,10 +3130,8 @@ def _evidence_audit_rules_running_matches_disk(facts: SystemFacts) -> str:
 
 
 # checks-backlog.md Group C's partition family: 19 "<option> set on <mount>"
-# checks + 5 "separate partition exists for <mount>" checks, plus 2 more
-# discovered during implementation (/tmp and /dev/shm), whose titles are
-# worded differently on newer documents; both wordings are listed on the same
-# Check.
+# checks + 7 "separate partition for <mount>" checks (/tmp and /dev/shm
+# included).
 def parse_mounts(text: str) -> dict[str, str]:
     """Parses facts.mounts_text (`findmnt -kn <target> -o TARGET,SOURCE,
     FSTYPE,OPTIONS`, one line per candidate mount that's actually a real,
@@ -3169,38 +3167,38 @@ def _evidence_mount_option(facts: SystemFacts, target: str, option: str) -> str:
     return f"{target}: mount options = {options} ({has} {option!r})"
 
 
-def _mount_option_check(title: str, target: str, option: str) -> "Check":
+def _mount_option_check(check_id: str, target: str, option: str) -> "Check":
     return Check(
-        titles=[title],
+        id=check_id,
         evaluate=lambda facts, t=target, o=option: _evaluate_mount_option(facts, t, o),
         evidence=lambda facts, t=target, o=option: _evidence_mount_option(facts, t, o),
     )
 
 
-# 19 candidates: (check title, mount target, required option). noexec is not
+# 19 candidates: (check id, mount target, required option). noexec is not
 # required on /home or /var (users/services need to execute their own files
 # there); the set below is the explicit per-mount list, not a uniform
 # 3-per-mount grid.
 _MOUNT_OPTION_CANDIDATES = [
-    ("Ensure nodev option set on /dev/shm partition", "/dev/shm", "nodev"),
-    ("Ensure nosuid option set on /dev/shm partition", "/dev/shm", "nosuid"),
-    ("Ensure noexec option set on /dev/shm partition", "/dev/shm", "noexec"),
-    ("Ensure nodev option set on /home partition", "/home", "nodev"),
-    ("Ensure nosuid option set on /home partition", "/home", "nosuid"),
-    ("Ensure nodev option set on /tmp partition", "/tmp", "nodev"),
-    ("Ensure nosuid option set on /tmp partition", "/tmp", "nosuid"),
-    ("Ensure noexec option set on /tmp partition", "/tmp", "noexec"),
-    ("Ensure nodev option set on /var partition", "/var", "nodev"),
-    ("Ensure nosuid option set on /var partition", "/var", "nosuid"),
-    ("Ensure nodev option set on /var/log partition", "/var/log", "nodev"),
-    ("Ensure nosuid option set on /var/log partition", "/var/log", "nosuid"),
-    ("Ensure noexec option set on /var/log partition", "/var/log", "noexec"),
-    ("Ensure nodev option set on /var/log/audit partition", "/var/log/audit", "nodev"),
-    ("Ensure nosuid option set on /var/log/audit partition", "/var/log/audit", "nosuid"),
-    ("Ensure noexec option set on /var/log/audit partition", "/var/log/audit", "noexec"),
-    ("Ensure nodev option set on /var/tmp partition", "/var/tmp", "nodev"),
-    ("Ensure nosuid option set on /var/tmp partition", "/var/tmp", "nosuid"),
-    ("Ensure noexec option set on /var/tmp partition", "/var/tmp", "noexec"),
+    ("mount_dev_shm_nodev", "/dev/shm", "nodev"),
+    ("mount_dev_shm_nosuid", "/dev/shm", "nosuid"),
+    ("mount_dev_shm_noexec", "/dev/shm", "noexec"),
+    ("mount_home_nodev", "/home", "nodev"),
+    ("mount_home_nosuid", "/home", "nosuid"),
+    ("mount_tmp_nodev", "/tmp", "nodev"),
+    ("mount_tmp_nosuid", "/tmp", "nosuid"),
+    ("mount_tmp_noexec", "/tmp", "noexec"),
+    ("mount_var_nodev", "/var", "nodev"),
+    ("mount_var_nosuid", "/var", "nosuid"),
+    ("mount_var_log_nodev", "/var/log", "nodev"),
+    ("mount_var_log_nosuid", "/var/log", "nosuid"),
+    ("mount_var_log_noexec", "/var/log", "noexec"),
+    ("mount_var_log_audit_nodev", "/var/log/audit", "nodev"),
+    ("mount_var_log_audit_nosuid", "/var/log/audit", "nosuid"),
+    ("mount_var_log_audit_noexec", "/var/log/audit", "noexec"),
+    ("mount_var_tmp_nodev", "/var/tmp", "nodev"),
+    ("mount_var_tmp_nosuid", "/var/tmp", "nosuid"),
+    ("mount_var_tmp_noexec", "/var/tmp", "noexec"),
 ]
 
 
@@ -3218,25 +3216,24 @@ def _evidence_separate_partition(facts: SystemFacts, target: str) -> str:
     return f"{target}: not a separate mount"
 
 
-def _separate_partition_check(titles: list[str], target: str) -> "Check":
+def _separate_partition_check(check_id: str, target: str) -> "Check":
     return Check(
-        titles=titles,
+        id=check_id,
         evaluate=lambda facts, t=target: _evaluate_separate_partition(facts, t),
         evidence=lambda facts, t=target: _evidence_separate_partition(facts, t),
     )
 
 
 # 7 candidates: 5 generic "separate partition for <mount>" targets plus /tmp
-# and /dev/shm, whose titles read differently (see the module comment above)
-# but check the exact same thing.
+# and /dev/shm; they all check the exact same thing.
 _SEPARATE_PARTITION_CANDIDATES = [
-    (["Ensure /tmp is a separate partition", "Ensure /tmp is tmpfs or a separate partition"], "/tmp"),
-    (["Ensure /dev/shm is a separate partition", "Ensure /dev/shm is tmpfs or a separate partition"], "/dev/shm"),
-    (["Ensure separate partition exists for /home"], "/home"),
-    (["Ensure separate partition exists for /var"], "/var"),
-    (["Ensure separate partition exists for /var/log"], "/var/log"),
-    (["Ensure separate partition exists for /var/log/audit"], "/var/log/audit"),
-    (["Ensure separate partition exists for /var/tmp"], "/var/tmp"),
+    ("mount_tmp_separate", "/tmp"),
+    ("mount_dev_shm_separate", "/dev/shm"),
+    ("mount_home_separate", "/home"),
+    ("mount_var_separate", "/var"),
+    ("mount_var_log_separate", "/var/log"),
+    ("mount_var_log_audit_separate", "/var/log/audit"),
+    ("mount_var_tmp_separate", "/var/tmp"),
 ]
 
 
@@ -3483,7 +3480,7 @@ _DISK_FULL_ACTIONS = ("halt", "single")
 _DISK_ERROR_ACTIONS = ("syslog", "single", "halt")
 
 
-def _evaluate_audit_disabled_when_full(facts: SystemFacts) -> bool:
+def _evaluate_audit_disk_full_error_actions(facts: SystemFacts) -> bool:
     """`disk_full_action` must be halt or single, AND `disk_error_action` must be
     syslog, single, or halt.
     """
@@ -3494,7 +3491,7 @@ def _evaluate_audit_disabled_when_full(facts: SystemFacts) -> bool:
     )
 
 
-def _evidence_audit_disabled_when_full(facts: SystemFacts) -> str:
+def _evidence_audit_disk_full_error_actions(facts: SystemFacts) -> str:
     directives = _audit_directives(facts)
     full = directives.get("disk_full_action", "<not set>")
     error = directives.get("disk_error_action", "<not set>")
@@ -3505,7 +3502,7 @@ _SPACE_LEFT_ACTIONS = ("email", "exec", "single", "halt")
 _ADMIN_SPACE_LEFT_ACTIONS = ("single", "halt")
 
 
-def _evaluate_audit_warns_low_space(facts: SystemFacts) -> bool:
+def _evaluate_audit_space_left_actions(facts: SystemFacts) -> bool:
     """`space_left_action` must be email, exec, single, or halt, AND
     `admin_space_left_action` must be single or halt.
     """
@@ -3516,7 +3513,7 @@ def _evaluate_audit_warns_low_space(facts: SystemFacts) -> bool:
     )
 
 
-def _evidence_audit_warns_low_space(facts: SystemFacts) -> str:
+def _evidence_audit_space_left_actions(facts: SystemFacts) -> str:
     directives = _audit_directives(facts)
     space = directives.get("space_left_action", "<not set>")
     admin = directives.get("admin_space_left_action", "<not set>")
@@ -3544,9 +3541,10 @@ def _evidence_audit_log_dir_mode(facts: SystemFacts) -> str:
 
 @dataclass
 class Check:
-    """One implemented, hand-written evaluator, plus every title wording it's
-    known to appear under. The consumer (invariant_api) looks the control up
-    by title, not by external_id, because both can drift between documents.
+    """One implemented, hand-written evaluator, identified by a stable `id`
+    of our own (snake_case, never reused or renamed; tests/snapshots/
+    check_ids.txt guards that). The consumer (invariant_api) maps the id to
+    whichever control it corresponds to in each document.
 
     `family` groups checks by the OS family they were written against
     (systemd/shadow/shell tooling shape), so `run_assessment()` can filter
@@ -3556,7 +3554,7 @@ class Check:
     `family_for_os()` below for the os_id -> family mapping.
     """
 
-    titles: list[str]
+    id: str
     evaluate: Callable[[SystemFacts], bool]
     evidence: Callable[[SystemFacts], str]
     family: str = "debian_ubuntu"
@@ -3568,185 +3566,133 @@ class Check:
 # kind of collected data.
 CHECKS = [
     Check(
-        titles=["Ensure sshd PermitRootLogin is disabled"],
+        id="ssh_permit_root_login",
         evaluate=_evaluate_ssh_permit_root_login,
         evidence=_evidence_ssh_permit_root_login,
     ),
     Check(
-        titles=[
-            "Ensure permissions on /etc/shadow are configured",
-            "Ensure access to /etc/shadow is configured",
-        ],
-        evaluate=_evaluate_shadow_permissions,
-        evidence=_evidence_shadow_permissions,
+        id="etc_shadow_permissions",
+        evaluate=_evaluate_etc_shadow_permissions,
+        evidence=_evidence_etc_shadow_permissions,
     ),
     Check(
-        titles=["Ensure sshd PermitUserEnvironment is disabled"],
+        id="ssh_permit_user_environment",
         evaluate=_evaluate_ssh_permit_user_environment,
         evidence=_evidence_ssh_permit_user_environment,
     ),
     Check(
-        titles=["Ensure sshd IgnoreRhosts is enabled"],
+        id="ssh_ignore_rhosts",
         evaluate=_evaluate_ssh_ignore_rhosts,
         evidence=_evidence_ssh_ignore_rhosts,
     ),
     Check(
-        titles=["Ensure sshd LoginGraceTime is configured"],
+        id="ssh_login_grace_time",
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
     ),
-    # Group A: plain file-permission checks. Some documents word the same
-    # check differently ("permissions on X" vs "access to X"); both wordings are
-    # listed in `titles`. Permission checks for hosts.allow/hosts.deny were
+    # Group A: plain file-permission checks. Permission checks for hosts.allow/hosts.deny were
     # looked at and not implemented -- see module docstring notes below the
     # CHECKS list.
     Check(
-        titles=[
-            "Ensure access to /etc/issue is configured",
-            "Ensure permissions on /etc/issue are configured",
-        ],
+        id="etc_issue_permissions",
         evaluate=_evaluate_etc_issue_permissions,
         evidence=_evidence_etc_issue_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/issue.net is configured",
-            "Ensure permissions on /etc/issue.net are configured",
-        ],
+        id="etc_issue_net_permissions",
         evaluate=_evaluate_etc_issue_net_permissions,
         evidence=_evidence_etc_issue_net_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/passwd is configured",
-            "Ensure permissions on /etc/passwd are configured",
-        ],
+        id="etc_passwd_permissions",
         evaluate=_evaluate_etc_passwd_permissions,
         evidence=_evidence_etc_passwd_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/passwd- is configured",
-            "Ensure permissions on /etc/passwd- are configured",
-        ],
+        id="etc_passwd_minus_permissions",
         evaluate=_evaluate_etc_passwd_minus_permissions,
         evidence=_evidence_etc_passwd_minus_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/group is configured",
-            "Ensure permissions on /etc/group are configured",
-        ],
+        id="etc_group_permissions",
         evaluate=_evaluate_etc_group_permissions,
         evidence=_evidence_etc_group_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/group- is configured",
-            "Ensure permissions on /etc/group- are configured",
-        ],
+        id="etc_group_minus_permissions",
         evaluate=_evaluate_etc_group_minus_permissions,
         evidence=_evidence_etc_group_minus_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/shadow- is configured",
-            "Ensure permissions on /etc/shadow- are configured",
-        ],
+        id="etc_shadow_minus_permissions",
         evaluate=_evaluate_etc_shadow_minus_permissions,
         evidence=_evidence_etc_shadow_minus_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/gshadow is configured",
-            "Ensure permissions on /etc/gshadow are configured",
-        ],
+        id="etc_gshadow_permissions",
         evaluate=_evaluate_etc_gshadow_permissions,
         evidence=_evidence_etc_gshadow_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/gshadow- is configured",
-            "Ensure permissions on /etc/gshadow- are configured",
-        ],
+        id="etc_gshadow_minus_permissions",
         evaluate=_evaluate_etc_gshadow_minus_permissions,
         evidence=_evidence_etc_gshadow_minus_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/shells is configured",
-            "Ensure permissions on /etc/shells are configured",
-        ],
+        id="etc_shells_permissions",
         evaluate=_evaluate_etc_shells_permissions,
         evidence=_evidence_etc_shells_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/ssh/sshd_config is configured",
-            "Ensure permissions on /etc/ssh/sshd_config are configured",
-        ],
-        evaluate=_evaluate_sshd_config_permissions,
-        evidence=_evidence_sshd_config_permissions,
+        id="etc_ssh_sshd_config_permissions",
+        evaluate=_evaluate_etc_ssh_sshd_config_permissions,
+        evidence=_evidence_etc_ssh_sshd_config_permissions,
     ),
     # Group B: passwd/group/shadow content checks.
     Check(
-        titles=[
-            "Ensure /etc/shadow password fields are not empty",
-            "Ensure password fields are not empty",
-            "Ensure Password Fields are Not Empty",
-        ],
+        id="shadow_password_fields_not_empty",
         evaluate=_evaluate_shadow_password_fields_not_empty,
         evidence=_evidence_shadow_password_fields_not_empty,
     ),
     Check(
-        titles=["Ensure accounts in /etc/passwd use shadowed passwords"],
+        id="passwd_accounts_use_shadowed_passwords",
         evaluate=_evaluate_passwd_accounts_use_shadowed_passwords,
         evidence=_evidence_passwd_accounts_use_shadowed_passwords,
     ),
     Check(
-        titles=["Ensure root is the only GID 0 account"],
+        id="root_only_gid0_account",
         evaluate=_evaluate_root_only_gid0_account,
         evidence=_evidence_root_only_gid0_account,
     ),
     Check(
-        titles=[
-            "Ensure root is the only UID 0 account",
-            "Verify No UID 0 Accounts Exist Other Than root",
-            "Configure root and system accounts and environment Page 637 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
-            "Configure root and system accounts and environment Page 671  5.4.2.1 Ensure root is the only UID 0 account",
-            "Configure root and system accounts and environment Page 677 Internal Only - General 5.4.2.1 Ensure root is the only UID 0 account",
-        ],
+        id="root_only_uid0_account",
         evaluate=_evaluate_root_only_uid0_account,
         evidence=_evidence_root_only_uid0_account,
     ),
     Check(
-        titles=["Ensure group root is the only GID 0 group"],
-        evaluate=_evaluate_only_root_group_has_gid0,
-        evidence=_evidence_only_root_group_has_gid0,
+        id="root_only_gid0_group",
+        evaluate=_evaluate_root_only_gid0_group,
+        evidence=_evidence_root_only_gid0_group,
     ),
     # Group C: PAM + login.defs checks.
     Check(
-        titles=["Ensure pam_faillock module is enabled"],
+        id="pam_faillock_enabled",
         evaluate=_evaluate_pam_faillock_enabled,
         evidence=_evidence_pam_faillock_enabled,
     ),
     Check(
-        titles=["Ensure pam_pwquality module is enabled"],
+        id="pam_pwquality_enabled",
         evaluate=_evaluate_pam_pwquality_enabled,
         evidence=_evidence_pam_pwquality_enabled,
     ),
     Check(
-        titles=["Ensure pam_pwhistory module is enabled"],
+        id="pam_pwhistory_enabled",
         evaluate=_evaluate_pam_pwhistory_enabled,
         evidence=_evidence_pam_pwhistory_enabled,
     ),
     Check(
-        # Two title wordings are listed for the same underlying misconfiguration
-        # (nullok on a pam_unix.so line).
-        titles=[
-            "Ensure pam_unix does not include nullok",
-            "Ensure pam modules do not include nullok",
-        ],
+        # nullok on a pam_unix.so line.
+        id="pam_no_nullok",
         evaluate=_evaluate_pam_no_nullok,
         evidence=_evidence_pam_no_nullok,
     ),
@@ -3755,239 +3701,204 @@ CHECKS = [
         # document_slug_for_os() never resolves to, so this check uses the wording
         # present in every supported document, at a 027-or-more-restrictive
         # threshold.
-        titles=["Ensure default user umask is configured"],
+        id="default_umask",
         evaluate=_evaluate_default_umask,
         evidence=_evidence_default_umask,
     ),
     # Group G: password quality/history, via pwquality.conf and pwhistory.conf.
-    # The minlen check is listed under two drifted title wordings, same pattern
-    # as the file-permission "access to X"/"permissions on X" drift Group A
-    # already documented.
     Check(
-        titles=["Ensure password quality is enforced for the root user"],
+        id="pwquality_enforce_for_root",
         evaluate=_evaluate_pwquality_enforce_for_root,
         evidence=_evidence_pwquality_enforce_for_root,
     ),
     Check(
-        titles=[
-            "Ensure minimum password length is configured",
-            "Ensure password length is configured",
-        ],
+        id="pwquality_minlen",
         evaluate=_evaluate_pwquality_minlen,
         evidence=_evidence_pwquality_minlen,
     ),
     Check(
-        titles=["Ensure password complexity is configured"],
+        id="pwquality_complexity",
         evaluate=_evaluate_pwquality_complexity,
         evidence=_evidence_pwquality_complexity,
     ),
     Check(
-        titles=["Ensure password same consecutive characters is configured"],
+        id="pwquality_max_repeat",
         evaluate=_evaluate_pwquality_max_repeat,
         evidence=_evidence_pwquality_max_repeat,
     ),
     Check(
-        titles=["Ensure password maximum sequential characters is configured"],
+        id="pwquality_max_sequence",
         evaluate=_evaluate_pwquality_max_sequence,
         evidence=_evidence_pwquality_max_sequence,
     ),
     Check(
-        titles=["Ensure password number of changed characters is configured"],
+        id="pwquality_difok",
         evaluate=_evaluate_pwquality_difok,
         evidence=_evidence_pwquality_difok,
     ),
     Check(
-        titles=["Ensure password history remember is configured"],
+        id="pwhistory_remember",
         evaluate=_evaluate_pwhistory_remember,
         evidence=_evidence_pwhistory_remember,
     ),
     Check(
-        titles=["Ensure password history is enforced for the root user"],
+        id="pwhistory_enforce_for_root",
         evaluate=_evaluate_pwhistory_enforce_for_root,
         evidence=_evidence_pwhistory_enforce_for_root,
     ),
     # Group H: pam_faillock lockout policy, via faillock.conf +
     # pam_faillock.so's own inline arguments on common-auth.
     Check(
-        titles=["Ensure password unlock time is configured"],
-        evaluate=_evaluate_password_unlock_time,
-        evidence=_evidence_password_unlock_time,
+        id="faillock_unlock_time",
+        evaluate=_evaluate_faillock_unlock_time,
+        evidence=_evidence_faillock_unlock_time,
     ),
     Check(
-        titles=["Ensure password failed attempts lockout is configured"],
-        evaluate=_evaluate_password_failed_attempts_lockout,
-        evidence=_evidence_password_failed_attempts_lockout,
+        id="faillock_deny",
+        evaluate=_evaluate_faillock_deny,
+        evidence=_evidence_faillock_deny,
     ),
     Check(
-        titles=["Ensure password failed attempts lockout includes root account"],
-        evaluate=_evaluate_password_lockout_includes_root,
-        evidence=_evidence_password_lockout_includes_root,
+        id="faillock_root_lockout",
+        evaluate=_evaluate_faillock_root_lockout,
+        evidence=_evidence_faillock_root_lockout,
     ),
     # Group D: remaining sshd_config directives + SSH host key permissions.
     Check(
-        titles=[
-            "Ensure sshd MaxSessions is configured",
-            "Ensure SSH MaxSessions is set to 10 or less",
-            "Ensure SSH MaxSessions is limited",
-        ],
+        id="ssh_max_sessions",
         evaluate=_evaluate_ssh_max_sessions,
         evidence=_evidence_ssh_max_sessions,
     ),
     Check(
-        titles=[
-            "Ensure sshd LogLevel is configured",
-            "Ensure SSH LogLevel is appropriate",
-        ],
+        id="ssh_log_level",
         evaluate=_evaluate_ssh_log_level,
         evidence=_evidence_ssh_log_level,
     ),
     Check(
-        titles=[
-            "Ensure sshd UsePAM is enabled",
-            "Ensure SSH PAM is enabled",
-        ],
+        id="ssh_use_pam",
         evaluate=_evaluate_ssh_use_pam,
         evidence=_evidence_ssh_use_pam,
     ),
     Check(
-        titles=["Ensure sshd DisableForwarding is enabled"],
+        id="ssh_disable_forwarding",
         evaluate=_evaluate_ssh_disable_forwarding,
         evidence=_evidence_ssh_disable_forwarding,
     ),
     Check(
-        titles=[
-            "Ensure sshd Ciphers are configured",
-            "Ensure only strong ciphers are used",
-            "Ensure only strong Ciphers are used",
-        ],
+        id="ssh_ciphers",
         evaluate=_evaluate_ssh_ciphers,
         evidence=_evidence_ssh_ciphers,
     ),
     Check(
-        titles=[
-            "Ensure sshd KexAlgorithms is configured",
-            "Ensure only strong Key Exchange algorithms are used",
-        ],
+        id="ssh_kex_algorithms",
         evaluate=_evaluate_ssh_kex_algorithms,
         evidence=_evidence_ssh_kex_algorithms,
     ),
     Check(
-        titles=[
-            "Ensure permissions on SSH private host key files are configured",
-            "Ensure access to SSH private host key files is configured",
-        ],
+        id="ssh_private_host_key_permissions",
         evaluate=_evaluate_ssh_private_host_key_permissions,
         evidence=_evidence_ssh_private_host_key_permissions,
     ),
     Check(
-        titles=[
-            "Ensure permissions on SSH public host key files are configured",
-            "Ensure access to SSH public host key files is configured",
-        ],
+        id="ssh_public_host_key_permissions",
         evaluate=_evaluate_ssh_public_host_key_permissions,
         evidence=_evidence_ssh_public_host_key_permissions,
     ),
     Check(
-        titles=["Ensure ldap client is not installed"],
+        id="ldap_client_not_installed",
         evaluate=_evaluate_ldap_client_not_installed,
         evidence=_evidence_ldap_client_not_installed,
     ),
     Check(
-        titles=["Ensure nis client is not installed", "Ensure NIS Client is not installed"],
+        id="nis_client_not_installed",
         evaluate=_evaluate_nis_client_not_installed,
         evidence=_evidence_nis_client_not_installed,
     ),
     Check(
-        titles=["Ensure xinetd services are not in use"],
+        id="xinetd_not_installed",
         evaluate=_evaluate_xinetd_not_installed,
         evidence=_evidence_xinetd_not_installed,
     ),
     Check(
-        titles=["Ensure rsync services are not in use"],
+        id="rsync_not_installed",
         evaluate=_evaluate_rsync_not_installed,
         evidence=_evidence_rsync_not_installed,
     ),
     Check(
-        titles=["Ensure X window server services are not in use"],
+        id="x_window_not_installed",
         evaluate=_evaluate_x_window_not_installed,
         evidence=_evidence_x_window_not_installed,
     ),
     Check(
-        titles=["Ensure telnet client is not installed"],
+        id="telnet_client_not_installed",
         evaluate=_evaluate_telnet_client_not_installed,
         evidence=_evidence_telnet_client_not_installed,
     ),
     Check(
-        titles=["Ensure rsh client is not installed"],
+        id="rsh_client_not_installed",
         evaluate=_evaluate_rsh_client_not_installed,
         evidence=_evidence_rsh_client_not_installed,
     ),
     Check(
-        titles=["Ensure ftp client is not installed"],
+        id="ftp_client_not_installed",
         evaluate=_evaluate_ftp_client_not_installed,
         evidence=_evidence_ftp_client_not_installed,
     ),
     Check(
-        titles=["Ensure talk client is not installed"],
+        id="talk_client_not_installed",
         evaluate=_evaluate_talk_client_not_installed,
         evidence=_evidence_talk_client_not_installed,
     ),
     Check(
-        titles=["Ensure prelink is not installed"],
+        id="prelink_not_installed",
         evaluate=_evaluate_prelink_not_installed,
         evidence=_evidence_prelink_not_installed,
     ),
-    # Group I: auditd config/tooling file ownership + rules immutability. Title
-    # wording is identical across supported documents for these five, so no
-    # variant aliases are needed. Two further candidates were looked at and not
+    # Group I: auditd config/tooling file ownership + rules immutability. Two further candidates were looked at and not
     # implemented:
     #   - an audit-configuration-loaded-regardless-of-errors check, which only
     #     exists in one supported document;
     #   - a SUID/SGID review check, which only lists files for a human to review
     #     and has no pass/fail condition.
     Check(
-        titles=["Ensure audit configuration files owner is configured"],
-        evaluate=_evaluate_audit_config_files_owner,
-        evidence=_evidence_audit_config_files_owner,
+        id="audit_conf_files_owner",
+        evaluate=_evaluate_audit_conf_files_owner,
+        evidence=_evidence_audit_conf_files_owner,
     ),
     Check(
-        titles=["Ensure audit configuration files group owner is configured"],
-        evaluate=_evaluate_audit_config_files_group_owner,
-        evidence=_evidence_audit_config_files_group_owner,
+        id="audit_conf_files_group_owner",
+        evaluate=_evaluate_audit_conf_files_group_owner,
+        evidence=_evidence_audit_conf_files_group_owner,
     ),
     Check(
-        titles=["Ensure audit tools owner is configured"],
+        id="audit_tools_owner",
         evaluate=_evaluate_audit_tools_owner,
         evidence=_evidence_audit_tools_owner,
     ),
     Check(
-        titles=["Ensure audit tools group owner is configured"],
+        id="audit_tools_group_owner",
         evaluate=_evaluate_audit_tools_group_owner,
         evidence=_evidence_audit_tools_group_owner,
     ),
     Check(
-        titles=["Ensure the audit configuration is immutable"],
+        id="audit_config_immutable",
         evaluate=_evaluate_audit_config_immutable,
         evidence=_evidence_audit_config_immutable,
     ),
     # Group H: sudoers + cron file permissions.
     Check(
-        titles=["Ensure sudo log file exists"],
+        id="sudo_log_file_exists",
         evaluate=_evaluate_sudo_log_file_exists,
         evidence=_evidence_sudo_log_file_exists,
     ),
     Check(
-        # Two title wordings ("for privilege escalation" / "for escalation") cover
-        # the same NOPASSWD-in-sudoers condition.
-        titles=[
-            "Ensure users must provide password for privilege escalation",
-            "Ensure users must provide password for escalation",
-        ],
+        # NOPASSWD in sudoers.
+        id="sudo_no_nopasswd",
         evaluate=_evaluate_sudo_no_nopasswd,
         evidence=_evidence_sudo_no_nopasswd,
     ),
     Check(
-        titles=["Ensure re-authentication for privilege escalation is not disabled globally"],
+        id="sudo_reauthentication_required",
         evaluate=_evaluate_sudo_reauthentication_required,
         evidence=_evidence_sudo_reauthentication_required,
     ),
@@ -3997,53 +3908,34 @@ CHECKS = [
     # live commands like `sudo -V`, so it can't be resolved correctly for every
     # supported document.
     Check(
-        titles=[
-            "Ensure access to /etc/crontab is configured",
-            "Ensure permissions on /etc/crontab are configured",
-        ],
-        evaluate=_evaluate_crontab_permissions,
-        evidence=_evidence_crontab_permissions,
+        id="etc_crontab_permissions",
+        evaluate=_evaluate_etc_crontab_permissions,
+        evidence=_evidence_etc_crontab_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/cron.hourly is configured",
-            "Ensure permissions on /etc/cron.hourly are configured",
-        ],
+        id="cron_hourly_permissions",
         evaluate=_evaluate_cron_hourly_permissions,
         evidence=_evidence_cron_hourly_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/cron.daily is configured",
-            "Ensure permissions on /etc/cron.daily are configured",
-        ],
+        id="cron_daily_permissions",
         evaluate=_evaluate_cron_daily_permissions,
         evidence=_evidence_cron_daily_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/cron.weekly is configured",
-            "Ensure permissions on /etc/cron.weekly are configured",
-        ],
+        id="cron_weekly_permissions",
         evaluate=_evaluate_cron_weekly_permissions,
         evidence=_evidence_cron_weekly_permissions,
     ),
     Check(
-        titles=[
-            "Ensure access to /etc/cron.monthly is configured",
-            "Ensure permissions on /etc/cron.monthly are configured",
-        ],
+        id="cron_monthly_permissions",
         evaluate=_evaluate_cron_monthly_permissions,
         evidence=_evidence_cron_monthly_permissions,
     ),
     Check(
-        # /etc/cron.d's external_id drifts between documents; title-based lookup
-        # makes that irrelevant to the Check itself. See test_assess_target.py's
-        # _SYSTEMIC_GAPS handling for where it does matter.
-        titles=[
-            "Ensure access to /etc/cron.d is configured",
-            "Ensure permissions on /etc/cron.d are configured",
-        ],
+        # See test_assess_target.py's _SYSTEMIC_GAPS handling for where the
+        # per-document differences matter.
+        id="cron_d_permissions",
         evaluate=_evaluate_cron_d_permissions,
         evidence=_evidence_cron_d_permissions,
     ),
@@ -4052,87 +3944,79 @@ CHECKS = [
     # rsyslog-related controls at all, so none could resolve across every
     # supported document -- see the module docstring notes below CHECKS.
     Check(
-        titles=["Ensure journald Compress is configured"],
+        id="journald_compress",
         evaluate=_evaluate_journald_compress,
         evidence=_evidence_journald_compress,
     ),
     Check(
-        titles=["Ensure journald Storage is configured"],
+        id="journald_storage",
         evaluate=_evaluate_journald_storage,
         evidence=_evidence_journald_storage,
     ),
     Check(
-        titles=["Ensure journald log file rotation is configured"],
+        id="journald_log_rotation",
         evaluate=_evaluate_journald_log_rotation,
         evidence=_evidence_journald_log_rotation,
     ),
     Check(
-        # Besides the clean title, other documents carry the same check with a PDF
-        # page-header glued onto it; those garbled strings are listed as aliases
-        # rather than treated as separate checks.
-        titles=[
-            "Ensure nologin is not listed in /etc/shells",
-            "Configure user default environment Page 690  5.4.3.1 Ensure nologin is not listed in /etc/shells",
-            "Configure user default environment Page 693 Internal Only - General 5.4.3.1 Ensure nologin is not listed in /etc/shells",
-            "Configure user default environment Page 654 Internal Only - General 5.4.3.1 Ensure nologin is not listed in /etc/shells",
-        ],
+        id="shells_no_nologin",
         evaluate=_evaluate_shells_no_nologin,
         evidence=_evidence_shells_no_nologin,
     ),
     Check(
-        titles=["Ensure access to /etc/motd is configured"],
+        id="etc_motd_permissions",
         evaluate=_evaluate_etc_motd_permissions,
         evidence=_evidence_etc_motd_permissions,
     ),
     Check(
-        titles=["Ensure access to bootloader config is configured"],
+        id="bootloader_config_permissions",
         evaluate=_evaluate_bootloader_config_permissions,
         evidence=_evidence_bootloader_config_permissions,
     ),
     # Group F: remaining sshd_config directives + PAM/login.defs checks. One
     # candidate (root account access control) was not implemented: the oldest
     # supported Debian document's nearest equivalent is a stricter, only
-    # partially overlapping condition, so merging the titles would silently
+    # partially overlapping condition, so merging the checks would silently
     # loosen that document's pass condition. (The root umask candidate is
     # implemented in Group K below, once facts.py grew the
     # root_shell_startup_text field.)
     Check(
-        titles=["Ensure sshd MACs are configured"],
+        id="ssh_macs",
         evaluate=_evaluate_ssh_macs,
         evidence=_evidence_ssh_macs,
     ),
     Check(
-        titles=["Ensure sshd MaxStartups is configured"],
+        id="ssh_max_startups",
         evaluate=_evaluate_ssh_max_startups,
         evidence=_evidence_ssh_max_startups,
     ),
     Check(
-        titles=["Ensure strong password hashing algorithm is configured"],
-        evaluate=_evaluate_strong_password_hashing_algorithm,
-        evidence=_evidence_strong_password_hashing_algorithm,
+        id="login_defs_encrypt_method",
+        evaluate=_evaluate_login_defs_encrypt_method,
+        evidence=_evidence_login_defs_encrypt_method,
     ),
     Check(
-        titles=["Ensure pam_unix module is enabled"],
+        id="pam_unix_enabled",
         evaluate=_evaluate_pam_unix_enabled,
         evidence=_evidence_pam_unix_enabled,
     ),
     Check(
-        titles=["Ensure pam_unix does not include remember"],
+        id="pam_unix_no_remember",
         evaluate=_evaluate_pam_unix_no_remember,
         evidence=_evidence_pam_unix_no_remember,
     ),
     Check(
-        titles=["Ensure pam_unix includes a strong password hashing algorithm"],
+        id="pam_unix_strong_password_hashing",
         evaluate=_evaluate_pam_unix_strong_password_hashing,
         evidence=_evidence_pam_unix_strong_password_hashing,
     ),
     Check(
-        titles=["Ensure pam_unix includes use_authtok"],
+        id="pam_unix_use_authtok",
         evaluate=_evaluate_pam_unix_use_authtok,
         evidence=_evidence_pam_unix_use_authtok,
     ),
     Check(
-        titles=["Ensure pam_pwhistory includes use_authtok"],
+        id="pam_pwhistory_use_authtok",
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
     ),
@@ -4142,223 +4026,221 @@ CHECKS = [
     # the oldest supported documents, consistent with the Group J note above.
     # The ufw check resolves on every supported document.
     Check(
-        titles=["Ensure ufw is installed"],
+        id="ufw_installed",
         evaluate=_evaluate_ufw_installed,
         evidence=_evidence_ufw_installed,
     ),
-    # Group L: sshd_config directives (round 2). Titles are identical across
-    # supported documents; no candidates dropped this round.
+    # Group L: sshd_config directives (round 2). No candidates dropped this round.
     Check(
-        titles=["Ensure sshd MaxAuthTries is configured"],
+        id="ssh_max_auth_tries",
         evaluate=_evaluate_ssh_max_auth_tries,
         evidence=_evidence_ssh_max_auth_tries,
     ),
     Check(
-        titles=["Ensure sshd PermitEmptyPasswords is disabled"],
+        id="ssh_permit_empty_passwords",
         evaluate=_evaluate_ssh_permit_empty_passwords,
         evidence=_evidence_ssh_permit_empty_passwords,
     ),
     Check(
-        titles=["Ensure sshd HostbasedAuthentication is disabled"],
+        id="ssh_hostbased_authentication",
         evaluate=_evaluate_ssh_hostbased_authentication,
         evidence=_evidence_ssh_hostbased_authentication,
     ),
     Check(
-        titles=["Ensure sshd GSSAPIAuthentication is disabled"],
+        id="ssh_gssapi_authentication",
         evaluate=_evaluate_ssh_gssapi_authentication,
         evidence=_evidence_ssh_gssapi_authentication,
     ),
     Check(
-        titles=["Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured"],
+        id="ssh_client_alive",
         evaluate=_evaluate_ssh_client_alive,
         evidence=_evidence_ssh_client_alive,
     ),
     Check(
         # Partial check -- see _evaluate_ssh_banner's docstring: the banner-file
         # content isn't verified, only that Banner points at an absolute path.
-        titles=["Ensure sshd Banner is configured"],
+        id="ssh_banner",
         evaluate=_evaluate_ssh_banner,
         evidence=_evidence_ssh_banner,
     ),
     Check(
         # Directive-presence only -- the actual user/group list is site policy, same
         # as this project's other "configured, not judged" checks.
-        titles=["Ensure sshd access is configured"],
-        evaluate=_evaluate_ssh_access,
-        evidence=_evidence_ssh_access,
+        id="ssh_allow_deny_configured",
+        evaluate=_evaluate_ssh_allow_deny_configured,
+        evidence=_evidence_ssh_allow_deny_configured,
     ),
     # Group M: unused network service packages, batch A (round 2).
     Check(
-        titles=["Ensure avahi daemon services are not in use"],
-        evaluate=_evaluate_avahi_not_in_use,
-        evidence=_evidence_avahi_not_in_use,
+        id="avahi_not_installed",
+        evaluate=_evaluate_avahi_not_installed,
+        evidence=_evidence_avahi_not_installed,
     ),
     Check(
-        titles=["Ensure bluetooth services are not in use"],
-        evaluate=_evaluate_bluetooth_not_in_use,
-        evidence=_evidence_bluetooth_not_in_use,
+        id="bluetooth_not_installed",
+        evaluate=_evaluate_bluetooth_not_installed,
+        evidence=_evidence_bluetooth_not_installed,
     ),
     Check(
-        titles=["Ensure dhcp server services are not in use"],
-        evaluate=_evaluate_dhcp_server_not_in_use,
-        evidence=_evidence_dhcp_server_not_in_use,
+        id="dhcp_server_not_installed",
+        evaluate=_evaluate_dhcp_server_not_installed,
+        evidence=_evidence_dhcp_server_not_installed,
     ),
     Check(
-        titles=["Ensure dns server services are not in use"],
-        evaluate=_evaluate_dns_server_not_in_use,
-        evidence=_evidence_dns_server_not_in_use,
+        id="dns_server_not_installed",
+        evaluate=_evaluate_dns_server_not_installed,
+        evidence=_evidence_dns_server_not_installed,
     ),
     Check(
-        titles=["Ensure dnsmasq services are not in use"],
-        evaluate=_evaluate_dnsmasq_not_in_use,
-        evidence=_evidence_dnsmasq_not_in_use,
+        id="dnsmasq_not_installed",
+        evaluate=_evaluate_dnsmasq_not_installed,
+        evidence=_evidence_dnsmasq_not_installed,
     ),
     Check(
-        titles=["Ensure ftp server services are not in use"],
-        evaluate=_evaluate_ftp_server_not_in_use,
-        evidence=_evidence_ftp_server_not_in_use,
+        id="ftp_server_not_installed",
+        evaluate=_evaluate_ftp_server_not_installed,
+        evidence=_evidence_ftp_server_not_installed,
     ),
     Check(
-        titles=["Ensure ldap server services are not in use"],
-        evaluate=_evaluate_ldap_server_not_in_use,
-        evidence=_evidence_ldap_server_not_in_use,
+        id="ldap_server_not_installed",
+        evaluate=_evaluate_ldap_server_not_installed,
+        evidence=_evidence_ldap_server_not_installed,
     ),
     Check(
-        titles=["Ensure message access server services are not in use"],
-        evaluate=_evaluate_message_access_server_not_in_use,
-        evidence=_evidence_message_access_server_not_in_use,
+        id="message_access_server_not_installed",
+        evaluate=_evaluate_message_access_server_not_installed,
+        evidence=_evidence_message_access_server_not_installed,
     ),
     Check(
-        titles=["Ensure network file system services are not in use"],
-        evaluate=_evaluate_nfs_server_not_in_use,
-        evidence=_evidence_nfs_server_not_in_use,
+        id="nfs_server_not_installed",
+        evaluate=_evaluate_nfs_server_not_installed,
+        evidence=_evidence_nfs_server_not_installed,
     ),
     Check(
-        titles=["Ensure nis server services are not in use"],
-        evaluate=_evaluate_nis_server_not_in_use,
-        evidence=_evidence_nis_server_not_in_use,
+        id="nis_server_not_installed",
+        evaluate=_evaluate_nis_server_not_installed,
+        evidence=_evidence_nis_server_not_installed,
     ),
     # Group N: unused network service packages batch B + required packages (round 2)
     Check(
-        titles=["Ensure print server services are not in use"],
+        id="cups_not_installed",
         evaluate=_evaluate_cups_not_installed,
         evidence=_evidence_cups_not_installed,
     ),
     Check(
-        titles=["Ensure rpcbind services are not in use"],
+        id="rpcbind_not_installed",
         evaluate=_evaluate_rpcbind_not_installed,
         evidence=_evidence_rpcbind_not_installed,
     ),
     Check(
-        titles=["Ensure samba file server services are not in use"],
+        id="samba_not_installed",
         evaluate=_evaluate_samba_not_installed,
         evidence=_evidence_samba_not_installed,
     ),
     Check(
-        titles=["Ensure snmp services are not in use"],
+        id="snmp_not_installed",
         evaluate=_evaluate_snmp_not_installed,
         evidence=_evidence_snmp_not_installed,
     ),
     Check(
-        titles=["Ensure tftp server services are not in use"],
+        id="tftp_server_not_installed",
         evaluate=_evaluate_tftp_server_not_installed,
         evidence=_evidence_tftp_server_not_installed,
     ),
     Check(
-        titles=["Ensure web proxy server services are not in use"],
+        id="web_proxy_not_installed",
         evaluate=_evaluate_web_proxy_not_installed,
         evidence=_evidence_web_proxy_not_installed,
     ),
     Check(
-        titles=["Ensure web server services are not in use"],
+        id="web_server_not_installed",
         evaluate=_evaluate_web_server_not_installed,
         evidence=_evidence_web_server_not_installed,
     ),
     Check(
-        titles=["Ensure autofs services are not in use"],
+        id="autofs_not_installed",
         evaluate=_evaluate_autofs_not_installed,
         evidence=_evidence_autofs_not_installed,
     ),
     Check(
-        titles=["Ensure sudo is installed"],
+        id="sudo_installed",
         evaluate=_evaluate_sudo_installed,
         evidence=_evidence_sudo_installed,
     ),
     Check(
-        titles=["Ensure auditd packages are installed"],
+        id="auditd_packages_installed",
         evaluate=_evaluate_auditd_packages_installed,
         evidence=_evidence_auditd_packages_installed,
     ),
     Check(
-        titles=["Ensure AIDE is installed"],
+        id="aide_installed",
         evaluate=_evaluate_aide_installed,
         evidence=_evidence_aide_installed,
     ),
     # Group Q: passwd/group consistency (round 2)
     Check(
-        titles=["Ensure no duplicate UIDs exist"],
+        id="no_duplicate_uids",
         evaluate=_evaluate_no_duplicate_uids,
         evidence=_evidence_no_duplicate_uids,
     ),
     Check(
-        titles=["Ensure no duplicate GIDs exist"],
+        id="no_duplicate_gids",
         evaluate=_evaluate_no_duplicate_gids,
         evidence=_evidence_no_duplicate_gids,
     ),
     Check(
-        titles=["Ensure no duplicate group names exist"],
+        id="no_duplicate_group_names",
         evaluate=_evaluate_no_duplicate_group_names,
         evidence=_evidence_no_duplicate_group_names,
     ),
     Check(
-        titles=["Ensure all groups in /etc/passwd exist in /etc/group"],
+        id="passwd_groups_exist_in_group",
         evaluate=_evaluate_passwd_groups_exist_in_group,
         evidence=_evidence_passwd_groups_exist_in_group,
     ),
     Check(
-        titles=["Ensure shadow group is empty"],
+        id="shadow_group_empty",
         evaluate=_evaluate_shadow_group_empty,
         evidence=_evidence_shadow_group_empty,
     ),
-    # Group P: shadow/login.defs/sudoers/pwquality (round 2). Titles, thresholds
-    # and conditions are identical across supported documents; none dropped.
+    # Group P: shadow/login.defs/sudoers/pwquality (round 2). None dropped.
     Check(
-        titles=["Ensure inactive password lock is configured"],
+        id="inactive_password_lock",
         evaluate=_evaluate_inactive_password_lock,
         evidence=_evidence_inactive_password_lock,
     ),
     Check(
-        titles=["Ensure all users last password change date is in the past"],
+        id="last_password_change_in_past",
         evaluate=_evaluate_last_password_change_in_past,
         evidence=_evidence_last_password_change_in_past,
     ),
     Check(
-        titles=["Ensure password expiration is configured"],
+        id="password_expiration_configured",
         evaluate=_evaluate_password_expiration_configured,
         evidence=_evidence_password_expiration_configured,
     ),
     Check(
-        titles=["Ensure password expiration warning days is configured"],
+        id="password_expiration_warning_configured",
         evaluate=_evaluate_password_expiration_warning_configured,
         evidence=_evidence_password_expiration_warning_configured,
     ),
     Check(
-        titles=["Ensure system accounts do not have a valid login shell"],
+        id="system_accounts_no_valid_shell",
         evaluate=_evaluate_system_accounts_no_valid_shell,
         evidence=_evidence_system_accounts_no_valid_shell,
     ),
     Check(
-        titles=["Ensure accounts without a valid login shell are locked"],
+        id="accounts_without_shell_locked",
         evaluate=_evaluate_accounts_without_shell_locked,
         evidence=_evidence_accounts_without_shell_locked,
     ),
     Check(
-        titles=["Ensure sudo commands use pty"],
+        id="sudo_use_pty",
         evaluate=_evaluate_sudo_use_pty,
         evidence=_evidence_sudo_use_pty,
     ),
     Check(
-        titles=["Ensure password dictionary check is enabled"],
+        id="pwquality_dictcheck",
         evaluate=_evaluate_pwquality_dictcheck,
         evidence=_evidence_pwquality_dictcheck,
     ),
@@ -4378,29 +4260,29 @@ CHECKS = [
     # export, which requires facts.py to track which file each line came from;
     # approximating it would risk a false PASS/FAIL, so it is left out.
     Check(
-        titles=["Ensure access to the su command is restricted"],
+        id="su_restricted",
         evaluate=_evaluate_su_restricted,
         evidence=_evidence_su_restricted,
     ),
     Check(
-        titles=["Ensure root user umask is configured"],
+        id="root_umask",
         evaluate=_evaluate_root_umask,
         evidence=_evidence_root_umask,
     ),
     # Group T: full-filesystem scans + root's PATH -- see the comment above
     # this group's evaluate()/evidence() functions.
     Check(
-        titles=["Ensure world writable files and directories are secured"],
+        id="world_writable_secured",
         evaluate=_evaluate_world_writable_secured,
         evidence=_evidence_world_writable_secured,
     ),
     Check(
-        titles=["Ensure no files or directories without an owner and a group exist"],
+        id="no_unowned_files",
         evaluate=_evaluate_no_unowned_files,
         evidence=_evidence_no_unowned_files,
     ),
     Check(
-        titles=["Ensure root path integrity"],
+        id="root_path_integrity",
         evaluate=_evaluate_root_path_integrity,
         evidence=_evidence_root_path_integrity,
     ),
@@ -4409,59 +4291,59 @@ CHECKS = [
     # rationale. A privileged-commands check was investigated and not implemented
     # (it needs a per-target SUID/SGID enumeration).
     Check(
-        titles=["Ensure actions as another user are always logged"],
+        id="user_emulation_logged",
         evaluate=_evaluate_user_emulation_logged,
         evidence=_evidence_user_emulation_logged,
     ),
     Check(
-        titles=["Ensure events that modify date and time information are collected"],
+        id="time_change_logged",
         evaluate=_evaluate_time_change_logged,
         evidence=_evidence_time_change_logged,
     ),
     Check(
-        titles=["Ensure events that modify the sudo log file are collected"],
+        id="sudo_log_file_logged",
         evaluate=_evaluate_sudo_log_file_logged,
         evidence=_evidence_sudo_log_file_logged,
     ),
     Check(
-        titles=["Ensure events that modify the system's Mandatory Access Controls are collected"],
+        id="mac_policy_logged",
         evaluate=_evaluate_mac_policy_logged,
         evidence=_evidence_mac_policy_logged,
     ),
     Check(
-        titles=["Ensure login and logout events are collected"],
+        id="logins_logged",
         evaluate=_evaluate_logins_logged,
         evidence=_evidence_logins_logged,
     ),
     Check(
-        titles=["Ensure session initiation information is collected"],
+        id="session_logged",
         evaluate=_evaluate_session_logged,
         evidence=_evidence_session_logged,
     ),
     Check(
-        titles=["Ensure successful file system mounts are collected"],
+        id="mounts_logged",
         evaluate=_evaluate_mounts_logged,
         evidence=_evidence_mounts_logged,
     ),
     Check(
-        titles=["Ensure unsuccessful file access attempts are collected"],
-        evaluate=_evaluate_unsuccessful_access_logged,
-        evidence=_evidence_unsuccessful_access_logged,
+        id="unsuccessful_file_access_logged",
+        evaluate=_evaluate_unsuccessful_file_access_logged,
+        evidence=_evidence_unsuccessful_file_access_logged,
     ),
     # Group V: see the comment block above these checks' evaluate()/evidence()
     # functions. A log-file-permissions candidate was not implemented.
     Check(
-        titles=["Ensure a single time synchronization daemon is in use"],
+        id="single_time_sync_daemon",
         evaluate=_evaluate_single_time_sync_daemon,
         evidence=_evidence_single_time_sync_daemon,
     ),
     Check(
-        titles=["Ensure auditing for processes that start prior to auditd is enabled"],
+        id="audit_processes_prior_to_auditd",
         evaluate=_evaluate_audit_processes_prior_to_auditd,
         evidence=_evidence_audit_processes_prior_to_auditd,
     ),
     Check(
-        titles=["Ensure password quality checking is enforced"],
+        id="pwquality_enforcing",
         evaluate=_evaluate_pwquality_enforcing,
         evidence=_evidence_pwquality_enforcing,
     ),
@@ -4469,78 +4351,77 @@ CHECKS = [
     # "Local interactive user" is defined via /etc/shells shell membership, not a
     # UID_MIN cutoff -- see _local_interactive_users()'s docstring.
     Check(
-        titles=["Ensure local interactive user home directories are configured"],
+        id="interactive_user_home_dirs",
         evaluate=_evaluate_interactive_user_home_dirs,
         evidence=_evidence_interactive_user_home_dirs,
     ),
     Check(
-        titles=["Ensure local interactive user dot files access is configured"],
+        id="interactive_user_dotfiles",
         evaluate=_evaluate_interactive_user_dotfiles,
         evidence=_evidence_interactive_user_dotfiles,
     ),
     # Group U: the auditd.conf family (checks-backlog.md's "Group A", see the
     # comment above facts.audit_conf_text and this group's own helper functions
-    # for the audit-tools scope difference). Titles are identical across
-    # supported documents for all 10; no variant aliases needed.
+    # for the audit-tools scope difference).
     Check(
-        titles=["Ensure audit configuration files mode is configured"],
+        id="audit_conf_files_mode",
         evaluate=_evaluate_audit_conf_files_mode,
         evidence=_evidence_audit_conf_files_mode,
     ),
     Check(
-        titles=["Ensure audit log files group owner is configured"],
+        id="audit_log_files_group_owner",
         evaluate=_evaluate_audit_log_files_group_owner,
         evidence=_evidence_audit_log_files_group_owner,
     ),
     Check(
-        titles=["Ensure audit log files mode is configured"],
+        id="audit_log_files_mode",
         evaluate=_evaluate_audit_log_files_mode,
         evidence=_evidence_audit_log_files_mode,
     ),
     Check(
-        titles=["Ensure audit log files owner is configured"],
+        id="audit_log_files_owner",
         evaluate=_evaluate_audit_log_files_owner,
         evidence=_evidence_audit_log_files_owner,
     ),
     Check(
-        titles=["Ensure audit log storage size is configured"],
+        id="audit_log_storage_size",
         evaluate=_evaluate_audit_log_storage_size,
         evidence=_evidence_audit_log_storage_size,
     ),
     Check(
-        titles=["Ensure audit logs are not automatically deleted"],
+        id="audit_logs_not_auto_deleted",
         evaluate=_evaluate_audit_logs_not_auto_deleted,
         evidence=_evidence_audit_logs_not_auto_deleted,
     ),
     Check(
-        titles=["Ensure audit tools mode is configured"],
+        id="audit_tools_mode",
         evaluate=_evaluate_audit_tools_mode,
         evidence=_evidence_audit_tools_mode,
     ),
     Check(
-        titles=["Ensure system is disabled when audit logs are full"],
-        evaluate=_evaluate_audit_disabled_when_full,
-        evidence=_evidence_audit_disabled_when_full,
+        id="audit_disk_full_error_actions",
+        evaluate=_evaluate_audit_disk_full_error_actions,
+        evidence=_evidence_audit_disk_full_error_actions,
     ),
     Check(
-        titles=["Ensure system warns when audit logs are low on space"],
-        evaluate=_evaluate_audit_warns_low_space,
-        evidence=_evidence_audit_warns_low_space,
+        id="audit_space_left_actions",
+        evaluate=_evaluate_audit_space_left_actions,
+        evidence=_evidence_audit_space_left_actions,
     ),
     Check(
-        titles=["Ensure the audit log file directory mode is configured"],
+        id="audit_log_dir_mode",
         evaluate=_evaluate_audit_log_dir_mode,
         evidence=_evidence_audit_log_dir_mode,
     ),
     # checks-backlog.md Group B -- see the comment above each evaluate()
     # function for why both are implementable without infra changes.
     Check(
-        titles=["Ensure systemd-timesyncd configured with authorized timeserver"],
+        id="timesyncd_authorized_timeserver",
         evaluate=_evaluate_timesyncd_authorized_timeserver,
         evidence=_evidence_timesyncd_authorized_timeserver,
     ),
     Check(
-        titles=["Ensure systemd-journal-remote service is not in use"],
+        id="journal_remote_not_in_use",
         evaluate=_evaluate_journal_remote_not_in_use,
         evidence=_evidence_journal_remote_not_in_use,
     ),
@@ -4548,43 +4429,43 @@ CHECKS = [
     # above _MOUNT_OPTION_CANDIDATES/_SEPARATE_PARTITION_CANDIDATES for how the 2
     # bonus /tmp+/dev/shm candidates were found.
     *[
-        _mount_option_check(title, target, option)
-        for title, target, option in _MOUNT_OPTION_CANDIDATES
+        _mount_option_check(check_id, target, option)
+        for check_id, target, option in _MOUNT_OPTION_CANDIDATES
     ],
     *[
-        _separate_partition_check(titles, target)
-        for titles, target in _SEPARATE_PARTITION_CANDIDATES
+        _separate_partition_check(check_id, target)
+        for check_id, target in _SEPARATE_PARTITION_CANDIDATES
     ],
     # checks-backlog.md "Grupo C -- systemd real" -- see the module comment
     # above _parse_systemd_service_status for the conditional/unconditional split
     # across these 6.
     Check(
-        titles=["Ensure auditd service is enabled and active"],
+        id="auditd_enabled_active",
         evaluate=_evaluate_auditd_enabled_active,
         evidence=_evidence_auditd_enabled_active,
     ),
     Check(
-        titles=["Ensure chrony is enabled and running"],
+        id="chrony_enabled_active",
         evaluate=_evaluate_chrony_enabled_active,
         evidence=_evidence_chrony_enabled_active,
     ),
     Check(
-        titles=["Ensure chrony is running as user _chrony"],
+        id="chrony_runs_as_chrony_user",
         evaluate=_evaluate_chrony_runs_as_chrony_user,
         evidence=_evidence_chrony_runs_as_chrony_user,
     ),
     Check(
-        titles=["Ensure cron daemon is enabled and active"],
+        id="cron_enabled_active",
         evaluate=_evaluate_cron_enabled_active,
         evidence=_evidence_cron_enabled_active,
     ),
     Check(
-        titles=["Ensure systemd-timesyncd is enabled and running"],
+        id="timesyncd_enabled_active",
         evaluate=_evaluate_timesyncd_enabled_active,
         evidence=_evidence_timesyncd_enabled_active,
     ),
     Check(
-        titles=["Ensure the running and on disk configuration is the same"],
+        id="audit_rules_running_matches_disk",
         evaluate=_evaluate_audit_rules_running_matches_disk,
         evidence=_evidence_audit_rules_running_matches_disk,
     ),
