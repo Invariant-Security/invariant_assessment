@@ -94,13 +94,12 @@ _TEXT_BLOCKS = [
     ("hosts_allow_text", "===HOSTS_ALLOW===", "cat /etc/hosts.allow 2>&1"),
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
-    # /etc/security/pwquality.conf.d/*.conf is part of the real audit for
-    # "Ensure password quality checking is enforced" (Group U below) --
-    # pwquality reads the base file then the conf.d dir, later values
-    # winning, so concatenating both here (missing dir just yields its own
-    # `cat` error text, same established pattern) keeps parse_pwquality_conf()
-    # accurate for every check that already reads this field, not just the
-    # new one.
+    # /etc/security/pwquality.conf.d/*.conf is read together with the base file
+    # (the password-quality enforcement check): pwquality reads the base file then
+    # the conf.d dir, later values winning, so concatenating both here (missing
+    # dir just yields its own `cat` error text, same established pattern) keeps
+    # parse_pwquality_conf() accurate for every check that already reads this
+    # field, not just the new one.
     ("pwquality_text", "===PWQUALITY===", "cat /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>&1"),
     ("pwhistory_text", "===PWHISTORY===", "cat /etc/security/pwhistory.conf 2>&1"),
     ("faillock_text", "===FAILLOCK===", "cat /etc/security/faillock.conf 2>&1"),
@@ -116,22 +115,19 @@ _TEXT_BLOCKS = [
         "echo '---LSMOD---'; lsmod 2>&1",
     ),
     ("pam_su_text", "===PAM_SU===", "cat /etc/pam.d/su 2>&1"),
-    # The real audit for "Ensure root user umask is configured" checks
-    # different file pairs by document (/root/.bash_profile + /root/.bashrc
-    # on debian_linux_11/ubuntu_linux_20_04; /root/.profile + /root/.bashrc
-    # on every other real target document) -- concatenating all three here
-    # avoids per-document branching in facts.py; a missing file just yields
-    # its `cat` error text, same established pattern as every other block.
+    # Root's shell startup files differ by distro document (/root/.bash_profile +
+    # /root/.bashrc on some; /root/.profile + /root/.bashrc on others) --
+    # concatenating all three here avoids per-document branching in facts.py; a
+    # missing file just yields its `cat` error text, same established pattern as
+    # every other block.
     ("root_shell_startup_text", "===ROOT_SHELL_STARTUP===", "cat /root/.bash_profile /root/.profile /root/.bashrc 2>&1"),
-    # The next 3 are full-filesystem `find` scans, not fixed-path reads --
-    # a different kind of collection than every block above. A container
-    # only has one real mount point (confirmed empirically: `findmnt -Dkerno
-    # fstype,target` never lists "/" itself in a container -- the real
-    # audit's own mount-enumeration loop would silently scan nothing), so
-    # these run `find / -xdev ...` directly instead of the real audit's
-    # findmnt-driven multi-mount loop; `-xdev` alone already keeps the scan
-    # from crossing into bind-mounted/pseudo filesystems (/proc, /sys,
-    # /dev, ...), which is all the real loop is for on a full VM. Timed at
+    # The next 3 are full-filesystem `find` scans, not fixed-path reads -- a
+    # different kind of collection than every block above. A container only has
+    # one real mount point (`findmnt -Dkerno fstype,target` never lists "/" itself
+    # in a container), so a per-mount-point loop would silently scan nothing;
+    # these run `find / -xdev ...` directly instead. `-xdev` alone already keeps
+    # the scan from crossing into bind-mounted/pseudo filesystems (/proc, /sys,
+    # /dev, ...), which is all a per-mount loop is for on a full VM. Timed at
     # ~150-220ms each against a bare debian:12 container -- well inside the
     # existing 10s timeout, no bump needed.
     (
@@ -149,20 +145,18 @@ _TEXT_BLOCKS = [
         r"-o -path '/var/*/private/*' \) -prune -o \( -type f -o -type d \) \( -nouser -o -nogroup \) "
         r"-printf '%y:%u:%g:%p\n' 2>&1",
     ),
-    # Root's real PATH, the way an interactive root login shell would see
-    # it (the real audit reads it via `sudo -Hiu root env`/`sudo su - root
-    # -c env`; collection already executes as root inside the target via
-    # `docker exec`, and `sudo` isn't installed on 3 of the 6 real target
-    # documents' matching containers -- so this spawns root's own login
-    # shell directly instead, `bash -l`, which sources /etc/profile and
-    # root's own profile/rc chain -- unlike a plain `sh -c` that sources
-    # nothing). First line of output is the raw PATH string; each
+    # Root's real PATH, the way an interactive root login shell would see it.
+    # Collection already executes as root inside the target via `docker exec`,
+    # and `sudo` isn't installed on some of the matching containers -- so this
+    # spawns root's own login shell directly instead, `bash -l`, which sources
+    # /etc/profile and root's own profile/rc chain -- unlike a plain `sh -c` that
+    # sources nothing. First line of output is the raw PATH string; each
     # following line reports one ':'-separated component in order
     # (`DIR:<path>:mode=.. uid=.. gid=.. gname=..` if it's a directory that
-    # exists, `NODIR:<path>` otherwise, `<path>` empty for a "::" or
-    # trailing ":" component) -- awk's `-F:` split (unlike shell word
-    # splitting) preserves empty fields the same way Python's `str.split(
-    # ":")` does, so the two line up positionally.
+    # exists, `NODIR:<path>` otherwise, `<path>` empty for a "::" or trailing ":"
+    # component) -- awk's `-F:` split (unlike shell word splitting) preserves
+    # empty fields the same way Python's `str.split(":")` does, so the two line
+    # up positionally.
     (
         "root_path_probe_text",
         "===ROOT_PATH_PROBE===",
@@ -173,14 +167,13 @@ _TEXT_BLOCKS = [
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G' \"$l_p\" 2>&1; "
         "else printf 'NODIR:%s\\n' \"$l_p\"; fi; done",
     ),
-    # Real audit for "Ensure auditing for processes that start prior to
-    # auditd is enabled" (Group U below), run close to verbatim: `find
-    # /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} +
-    # | grep -v 'audit=1'` should return nothing. A container has no
-    # /boot/grub/grub.cfg at all -- `find` matches zero files, the whole
-    # pipe naturally produces no output, same vacuous-PASS precedent as
-    # the kernel-module checks above (grep against something that isn't
-    # there correctly reports "nothing to flag").
+    # Used by the audit-processes-prior-to-auditd check (Group U below): lists
+    # `linux` lines of any grub.cfg under /boot that lack `audit=1`
+    # (`find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} +
+    # | grep -v 'audit=1'`). A container has no /boot/grub/grub.cfg at all --
+    # `find` matches zero files, the whole pipe naturally produces no output,
+    # same vacuous-PASS precedent as the kernel-module checks above (grep
+    # against something that isn't there correctly reports "nothing to flag").
     (
         "boot_grub_audit_text",
         "===BOOT_GRUB_AUDIT===",
@@ -188,25 +181,21 @@ _TEXT_BLOCKS = [
     ),
     ("interactive_user_files_text", "===INTERACTIVE_USER_FILES===", _INTERACTIVE_USER_FILES_CMD),
     # auditd.conf directives + the file-system evidence the 10 Group A (per
-    # checks-backlog.md) auditd.conf-family checks need: the config files
-    # under /etc/audit/ (mode), the audit log directory + the files in it
+    # checks-backlog.md) auditd.conf-family checks need: the config files under
+    # /etc/audit/ (mode), the audit log directory + the files in it
     # (mode/owner/group -- the directory is derived from auditd.conf's own
-    # `log_file` directive via `dirname`, the same way the real CIS audit
-    # scripts do it, not hardcoded, in case a real target ever overrides
-    # it), and a fixed set of audit tool binaries (mode). One shell command,
-    # 4 sections separated by their own markers (same "one text field, self-
-    # parsed sub-markers" shape as kernel_modules_text above).
+    # `log_file` directive via `dirname`, not hardcoded, in case a real target
+    # ever overrides it), and a fixed set of audit tool binaries (mode). One shell
+    # command, 4 sections separated by their own markers (same "one text field,
+    # self-parsed sub-markers" shape as kernel_modules_text above).
     #
     # The tool list is 6 binaries (auditctl, aureport, ausearch, auditd,
-    # augenrules, autrace) -- debian_linux_13's own script for "Ensure audit
-    # tools mode is configured" drops /sbin/autrace from its array (the
-    # other 5 real target documents keep it), but checking it uniformly
-    # everywhere is a strict superset, not a false-positive risk: a missing
-    # /sbin/autrace just yields no matching stat line for that path (see
-    # _parse_stat_lines), and a present-but-permissive one is a real gap
-    # regardless of whether the specific target document's own audit text
-    # happens to check it -- same "widen the shared check, don't branch per
-    # document" pattern used everywhere else in this module.
+    # augenrules, autrace). One supported document omits /sbin/autrace from its
+    # list, but checking it uniformly everywhere is a strict superset, not a
+    # false-positive risk: a missing /sbin/autrace just yields no matching stat
+    # line for that path (see _parse_stat_lines), and a present-but-permissive
+    # one is a real gap either way -- same "widen the shared check, don't branch
+    # per document" pattern used everywhere else in this module.
     (
         "audit_conf_text",
         "===AUDIT_CONF===",
@@ -234,49 +223,37 @@ _TEXT_BLOCKS = [
         "stat -Lc 'mode=%a uid=%u gid=%g gname=%G path=%n' /sbin/auditctl /sbin/aureport "
         "/sbin/ausearch /sbin/auditd /sbin/augenrules /sbin/autrace 2>&1",
     ),
-    # "Ensure systemd-timesyncd configured with authorized timeserver"
-    # (checks-backlog.md Group B) -- confirmed via Postgres, full untruncated
-    # audit script compared across all 6 real documents: same underlying
-    # bash logic everywhere (debian_linux_11 uses an older associative-array
-    # style, the other 5 a refactored array style), only page numbers and
-    # array-bookkeeping cosmetics differ. The real audit reads the merged
-    # config via `systemd-analyze cat-config`, i.e. base file + conf.d, later
-    # file wins -- concatenating both here is the same established pattern
-    # as pwquality_text above (a missing conf.d dir just yields its own
-    # `cat` error text).
+    # timesyncd configuration (authorized time server check, checks-backlog.md
+    # Group B). The effective config is the merged base file + conf.d, later file
+    # wins -- concatenating both here is the same established pattern as
+    # pwquality_text above (a missing conf.d dir just yields its own `cat` error
+    # text).
     ("timesyncd_text", "===TIMESYNCD===", "cat /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf 2>&1"),
-    # "Ensure systemd-journal-remote service is not in use" (checks-backlog.md
-    # Group B) -- audit text is verbatim identical across all 6 real
-    # documents (confirmed via Postgres, only page-number/footer boilerplate
-    # differs): `systemctl is-enabled ...socket ...service | grep -P
-    # '^enabled'` then the same with `is-active`/`^active`, and "nothing
-    # should be returned" from either is the documented PASS condition.
-    # These containers don't run real systemd (PID 1 isn't systemd, same gap
-    # documented for Group C), so `systemctl` itself errors out here -- but
-    # that error is exactly "nothing matching ^enabled/^active", the literal
-    # letter of the audit's own PASS condition, not an approximation of it
-    # (contrast Group C's enabled+active checks, which need to prove a
-    # *positive* running state that a systemd-less container genuinely can't
-    # demonstrate). Same vacuous-PASS precedent as boot_grub_audit_text.
+    # systemd-journal-remote must not be in use (checks-backlog.md Group B):
+    # `systemctl is-enabled ...socket ...service | grep -P '^enabled'` then the
+    # same with `is-active`/`^active`; nothing returned from either is the PASS
+    # condition. These containers don't run real systemd (PID 1 isn't systemd,
+    # same gap documented for Group C), so `systemctl` itself errors out here --
+    # but that error is exactly "nothing matching ^enabled/^active", the literal
+    # PASS condition, not an approximation of it (contrast Group C's
+    # enabled+active checks, which need to prove a *positive* running state that
+    # a systemd-less container genuinely can't demonstrate). Same vacuous-PASS
+    # precedent as boot_grub_audit_text.
     (
         "journal_remote_status_text",
         "===JOURNAL_REMOTE_STATUS===",
         "systemctl is-enabled systemd-journal-remote.socket systemd-journal-remote.service 2>&1 | grep -P -- '^enabled'; "
         "systemctl is-active systemd-journal-remote.socket systemd-journal-remote.service 2>&1 | grep -P -- '^active'",
     ),
-    # checks-backlog.md "Grupo C -- systemd real" (6 candidates). Real audit
-    # commands, verbatim, confirmed via Postgres across all 6 target
-    # documents (identical text, only page/footer noise and external_id
-    # differ). Collected unconditionally on every target, same as every
-    # other field here -- a target with no real systemd just gets
-    # systemctl's own error text back ("System has not been booted with
-    # systemd as init system..."), which every evaluate() below reads as
-    # "not enabled/active" (for the 2 unconditional controls) or, combined
-    # with installed_packages, as a vacuous PASS for the 4 controls whose
-    # own real audit text is gated "- IF - X is in use on the system" --
-    # same substitution pattern _evaluate_single_time_sync_daemon already
-    # uses, and the same reasoning already applied to
-    # journal_remote_status_text above.
+    # checks-backlog.md "Grupo C -- systemd real" (6 candidates). Collected
+    # unconditionally on every target, same as every other field here -- a target
+    # with no real systemd just gets systemctl's own error text back ("System has
+    # not been booted with systemd as init system..."), which every evaluate()
+    # below reads as "not enabled/active" (for the 2 unconditional checks) or,
+    # combined with installed_packages, as a vacuous PASS for the 4 checks that
+    # only apply when the daemon is in use on the system -- same substitution
+    # pattern _evaluate_single_time_sync_daemon already uses, and the same
+    # reasoning already applied to journal_remote_status_text above.
     (
         "systemd_service_status_text",
         "===SYSTEMD_SERVICE_STATUS===",
@@ -289,36 +266,31 @@ _TEXT_BLOCKS = [
         "echo '--TIMESYNCD_ENABLED--'; systemctl is-enabled systemd-timesyncd.service 2>&1; "
         "echo '--TIMESYNCD_ACTIVE--'; systemctl is-active systemd-timesyncd.service 2>&1",
     ),
-    # "Ensure chrony is running as user _chrony" -- real audit is a live
-    # `ps -ef` grep, unconditional on package presence: a target with no
-    # chronyd process at all naturally produces no output either way, same
-    # vacuous-pass-by-absence precedent as boot_grub_audit_text.
+    # chronyd must run as `_chrony`: a live `ps -ef` grep, unconditional on
+    # package presence -- a target with no chronyd process at all naturally
+    # produces no output either way, same vacuous-pass-by-absence precedent as
+    # boot_grub_audit_text.
     (
         "chrony_process_user_text",
         "===CHRONY_PROCESS_USER===",
         "ps -ef 2>&1 | awk '(/[c]hronyd/ && $1!=\"_chrony\") { print $1 }'",
     ),
-    # "Ensure the running and on disk configuration is the same" -- real
-    # audit is `augenrules --check`, whose PASS text is exactly "No
-    # change". A target without augenrules installed gets a shell error
-    # here, read as FAIL -- fails closed, same posture Group I already
-    # established for every other auditd-absent check (a missing
-    # auditd.conf/log directory is an explicit FAIL branch in the real
-    # script, not a vacuous pass).
+    # Running vs on-disk audit rules: `augenrules --check`, whose PASS text is
+    # exactly "No change". A target without augenrules installed gets a shell
+    # error here, read as FAIL -- fails closed, same posture Group I already
+    # established for every other auditd-absent check.
     ("audit_rules_sync_text", "===AUDIT_RULES_SYNC===", "augenrules --check 2>&1"),
     # checks-backlog.md Group C's 24 partition/mount-option candidates: one
     # `findmnt -kn <target>` per candidate mount point, looped rather than
-    # passed as one multi-target invocation -- confirmed empirically that
-    # `findmnt -kn A B` exits 1 with zero output the moment even one of A/B
-    # isn't a real mount (not "print what resolves, skip the rest"), which
-    # would silently blank every target's line the first time any one of
-    # the 7 isn't mounted. Looped, each target's line (or absence) is
-    # independent. Real audit for both the "<option> set on X" and the
-    # "separate partition exists for X" families is this exact command
-    # (confirmed via Postgres across all 6 target documents) -- a target
-    # that isn't a real mount at all yields no line here, which is what the
-    # "<option> set" evaluators read as a vacuous PASS (CIS's own "- IF - a
-    # separate partition exists" conditional), not a failure.
+    # passed as one multi-target invocation -- `findmnt -kn A B` exits 1 with
+    # zero output the moment even one of A/B isn't a real mount (not "print what
+    # resolves, skip the rest"), which would silently blank every target's line
+    # the first time any one of the 7 isn't mounted. Looped, each target's line
+    # (or absence) is independent. The same command serves both the "<option> set
+    # on X" and the "separate partition exists for X" families -- a target that
+    # isn't a real mount at all yields no line here, which the "<option> set"
+    # evaluators read as a vacuous PASS (they only apply when a separate
+    # partition exists), not a failure.
     (
         "mounts_text",
         "===MOUNTS===",
@@ -345,11 +317,10 @@ _TEXT_BLOCKS = [
 def _collect_script() -> str:
     # `sshd -T` (not `cat /etc/ssh/sshd_config`) on purpose: it prints the
     # *effective* config -- every directive, including ones left at their
-    # OpenSSH default because the config file never sets them explicitly
-    # (confirmed: our own demo containers never set IgnoreRhosts, but
-    # `sshd -T` still correctly reports its secure default, "yes"; parsing
-    # the raw file would have missed it entirely and looked unset). This
-    # is also literally what CIS's own audit commands run.
+    # OpenSSH default because the config file never sets them explicitly (our own
+    # demo containers never set IgnoreRhosts, but `sshd -T` still correctly
+    # reports its secure default, "yes"; parsing the raw file would have missed it
+    # entirely and looked unset).
     #
     # Each block's marker is echoed *before* its command runs, so every
     # marker is guaranteed present in the output even if the command

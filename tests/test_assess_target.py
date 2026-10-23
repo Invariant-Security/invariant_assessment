@@ -1,20 +1,12 @@
 """Integration coverage for POST /assessment/run against the 6 real
-demo/test containers (invariant-debian-baseline, etc. -- same fixed set
-the monolith's own infra/docker-compose.yml still defines and this repo
-doesn't duplicate). Confirmed via a direct comparison against the
-monolith's `assess_target()` for the same 6 containers (same CHECKS order
--> same status list, position by position) at the time this test was
-written -- see the extraction notes in the PR/commit that added this file.
-
-Every FAIL here is identified by `titles[0]` (the canonical wording for
-that Check), not an external_id -- this service never sees a real CIS
-external_id at all (see api.py's module docstring for why), and unlike
-the monolith's own test suite, that means no per-document drift dict is
+demo/test containers (invariant-debian-baseline, etc.). Every FAIL here is
+identified by `titles[0]` (the canonical wording for that Check), not an
+external_id -- this service never sees a real external_id at all (see
+api.py's module docstring for why), so no per-document drift dict is
 needed: the same 70 systemic gaps fail identically on all 6 containers
-(none of the 6 Dockerfiles were ever hardened for them -- see the
-monolith's docs/architecture/checks-backlog.md for the "why" of each),
-plus one extra title on the 2 "ssh-bad" containers and one extra on the
-2 "permissions-bad" containers, matching each container's own story.
+(none of the 6 Dockerfiles were ever hardened for them), plus one extra
+title on the 2 "ssh-bad" containers and one extra on the 2
+"permissions-bad" containers, matching each container's own story.
 """
 
 import pytest

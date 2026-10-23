@@ -3,7 +3,7 @@
 routes/assess.py needs, and nothing else. No Postgres here, ever: this
 service only knows "which check titles passed/failed, with what
 evidence" -- turning that into a real Finding (external_id, remediation,
-CIS level/scored) is invariant_api's job, which owns the database.
+level, scored flag) is invariant_api's job, which owns the database.
 """
 
 from fastapi import FastAPI, HTTPException, Response

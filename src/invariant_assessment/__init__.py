@@ -1,23 +1,19 @@
 """Evaluates a target's collected SystemFacts against every implemented
-CIS control -- the `Check`/`CHECKS` half of the former Invariant monolith's
-assessment engine, extracted into its own service.
+check -- the `Check`/`CHECKS` half of the assessment engine, extracted
+into its own service.
 
-Deliberately has no Postgres access and no concept of a `Finding` (which
-needs a real control's external_id/remediation/CIS metadata -- that lives
-in invariant_api, the only invariant_* service allowed to touch Postgres).
-This module's job stops at "which check titles passed/failed, with what
-evidence" -- see api.py's `/assessment/run` for the thin FastAPI wrapper
-that exposes this over HTTP, and invariant_api's `routes/assess.py` for
-where the check-title results get joined against real CIS controls to
-build a `Finding`.
+Deliberately has no Postgres access and no concept of a `Finding`: this
+module's job stops at "which checks passed/failed, with what evidence".
+api.py exposes that over HTTP (`/assessment/run`); invariant_api joins the
+results against its own control catalogue.
 
 Evidence is gathered once per target (facts.collect_facts(), a single
-`docker exec`) rather than once per check -- checks are plain Python
-comparisons against that snapshot, not their own command. No agent
-installed on the target.
+`docker exec` or SSH round trip) rather than once per check -- checks are
+plain Python comparisons against that snapshot. No agent is installed on
+the target.
 
-Which CIS document applies to a target is *detected* from the collected
-facts, not hardcoded (document_slug_for_os()).
+The OS document a target maps to is *detected* from the collected facts,
+not hardcoded (document_slug_for_os()).
 """
 
 import re
@@ -82,9 +78,7 @@ def _evidence_ssh_permit_root_login(facts: SystemFacts) -> str:
 
 
 def _evaluate_shadow_permissions(facts: SystemFacts) -> bool:
-    """Matches the real audit condition (control 7.1.5): mode 640 or more
-    restrictive, Uid 0/root, Gid 0/root or the shadow group.
-    """
+    """Mode 640 or more restrictive, uid 0/root, gid 0/root or the shadow group."""
     stat = facts.file_stats.get("/etc/shadow")
     if stat is None or stat.mode is None:
         return False
@@ -133,12 +127,10 @@ def _evidence_ssh_login_grace_time(facts: SystemFacts) -> str:
 def _permissions_ok(
     facts: SystemFacts, path: str, max_mode: int, allowed_gnames: tuple[str, ...]
 ) -> bool:
-    """Shared by every plain file-permission check below (Group A: /etc/issue,
+    """Shared by every plain file-permission check below (/etc/issue,
     /etc/passwd(-), /etc/group(-), /etc/shadow-, /etc/gshadow(-), /etc/shells,
-    /etc/ssh/sshd_config) -- their real CIS audit text is otherwise a copy of
-    the /etc/shadow one already implemented above (stat mode <= a ceiling,
-    Uid 0/root, Gid 0/root or a specific group), just with a different
-    path/mode/allowed group.
+    /etc/ssh/sshd_config): stat mode <= a ceiling, uid 0/root, gid 0/root or one
+    allowed group, parameterised by path/mode/group.
     """
     stat = facts.file_stats.get(path)
     if stat is None or stat.mode is None:
@@ -252,10 +244,8 @@ def _passwd_fields(passwd_text: str) -> list[list[str]]:
 
 
 def _evaluate_shadow_password_fields_not_empty(facts: SystemFacts) -> bool:
-    """Real audit (e.g. CIS Debian 12, control 7.2.1): `awk -F: '($2 == ""
-    ) {print $1}' /etc/shadow` must return nothing -- every account's
-    password field (colon field 2) must be set to something (a hash, or a
-    lock marker like `*`/`!`), never empty.
+    """Every account's password field in /etc/shadow (colon field 2) must be
+    non-empty: a hash or a lock marker such as `*` or `!`, never blank.
     """
     for fields in _passwd_fields(facts.shadow_text):
         if fields[1] == "":
@@ -271,10 +261,8 @@ def _evidence_shadow_password_fields_not_empty(facts: SystemFacts) -> str:
 
 
 def _evaluate_passwd_accounts_use_shadowed_passwords(facts: SystemFacts) -> bool:
-    """Real audit: `awk -F: '($2 != "x") {print $1}' /etc/passwd` must
-    return nothing -- every account's /etc/passwd password field (colon
-    field 2) must be the literal "x", meaning the real hash lives in
-    /etc/shadow instead of sitting in the world-readable passwd file.
+    """Every account's password field in /etc/passwd (colon field 2) must be the
+    literal "x", so the real hash lives in /etc/shadow.
     """
     for fields in _passwd_fields(facts.passwd_text):
         if fields[1] != "x":
@@ -293,11 +281,8 @@ _GID0_EXCLUDED_PREFIXES = ("sync", "shutdown", "halt", "operator")
 
 
 def _evaluate_root_only_gid0_account(facts: SystemFacts) -> bool:
-    """Real audit (CIS Debian 12/13, 7.2.5): `awk -F: '($1 !~
-    /^(sync|shutdown|halt|operator)/ && $4=="0") {print $1}' /etc/passwd`
-    must return only "root" -- no account other than root (and a handful
-    of system accounts the benchmark excludes by name) may have primary
-    GID 0.
+    """No account other than root (ignoring sync/shutdown/halt/operator) may have
+    primary GID 0 in /etc/passwd.
     """
     gid0_accounts = [
         fields[0]
@@ -317,9 +302,7 @@ def _evidence_root_only_gid0_account(facts: SystemFacts) -> str:
 
 
 def _evaluate_root_only_uid0_account(facts: SystemFacts) -> bool:
-    """Real audit: `awk -F: '($3 == 0) {print $1}' /etc/passwd` must
-    return only "root" -- no other account may have UID 0.
-    """
+    """No account other than root may have UID 0."""
     uid0_accounts = [fields[0] for fields in _passwd_fields(facts.passwd_text) if fields[2] == "0"]
     return uid0_accounts == ["root"]
 
@@ -346,19 +329,11 @@ def _gid_to_group_name(group_text: str) -> dict[str, str]:
 
 
 def _local_interactive_users(facts: SystemFacts) -> list[dict[str, str]]:
-    """A "local interactive user" per the real CIS audit backing both
-    "Ensure local interactive user home directories are configured" and
-    "Ensure local interactive user dot files access is configured"
-    (confirmed identical logic across all 6 target documents via Postgres):
-    any /etc/passwd account whose login shell (last colon field) is listed
-    in /etc/shells and isn't a nologin-style shell -- *not* a UID_MIN
-    cutoff, despite that being the more familiar CIS pattern elsewhere.
-    Notably this does **not** exclude root: root's own shell (typically
-    /bin/bash) is listed in /etc/shells, so the real script sweeps root's
-    home directory into scope too -- confirmed against a real container
-    rather than assumed. Reuses the same `_valid_login_shells()` already
-    used by controls 5.4.2.7/5.4.2.8 (identical real filter), rather than
-    duplicating it.
+    """A "local interactive user" is any /etc/passwd account whose login shell
+    (last colon field) is listed in /etc/shells and isn't a nologin-style shell.
+    There is no UID_MIN cutoff, and root is not excluded: its shell is listed in
+    /etc/shells, so its home directory is in scope too. Reuses
+    `_valid_login_shells()`.
     """
     valid_shells = _valid_login_shells(facts)
     users = []
@@ -398,9 +373,8 @@ def _parse_interactive_user_files(
     return homes, dotfiles
 
 
-# Real audit mask 0027: flags group-write or any other-permission bit --
-# equivalent to "mode 750 or more restrictive" (group read/execute is fine,
-# group write and anything for "other" is not).
+# Mask 0027: flags group-write or any other-permission bit (mode 750 or
+# stricter passes).
 _HOME_DIR_MASK = 0o027
 
 
@@ -422,9 +396,8 @@ def _home_dir_violations(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_interactive_user_home_dirs(facts: SystemFacts) -> bool:
-    """Real audit (identical across all 6 target documents): for every
-    local interactive user, their /etc/passwd home directory must exist, be
-    owned by that user, and be mode 750 or more restrictive.
+    """For every local interactive user, the /etc/passwd home directory must
+    exist, be owned by that user, and be mode 750 or more restrictive.
     """
     return not _home_dir_violations(facts)
 
@@ -436,15 +409,10 @@ def _evidence_interactive_user_home_dirs(facts: SystemFacts) -> str:
     return "local interactive user home directories: all exist, owned by the user, mode 750 or more restrictive"
 
 
-# Real audit mask 0133 for "ordinary" dotfiles: flags group/other write or
-# execute -- equivalent to "mode 644 or more restrictive". .forward/.rhost/
-# .netrc are excluded from this generic bucket -- the real script treats
-# them specially (.forward/.rhost existing at all is the failure, .netrc's
-# permissions get a stricter 0600 ceiling and a compliant .netrc is only a
-# WARNING, never a FAIL). Reproducing that full branching isn't worth the
-# added complexity for the scope of this check; the generic dotfile rule
-# below (mode/owner/group) is still a real, unmodified slice of the same
-# audit script, just not its complete branch coverage.
+# Mask 0133 for ordinary dotfiles: flags group/other write or execute (mode
+# 644 or stricter passes). .forward/.rhost/.netrc are excluded from this
+# generic bucket; the special-case handling for them is not modeled here, so
+# only the generic mode/owner/group rule below is enforced.
 _DOTFILE_MASK = 0o133
 _DOTFILE_EXCLUDED_NAMES = {".forward", ".rhost", ".netrc"}
 
@@ -469,11 +437,10 @@ def _dotfile_violations(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_interactive_user_dotfiles(facts: SystemFacts) -> bool:
-    """Real audit (identical across all 6 target documents): every dotfile
-    directly inside a local interactive user's home directory (excluding
-    .forward/.rhost/.netrc, see _DOTFILE_EXCLUDED_NAMES) must be mode 644 or
-    more restrictive, owned by that user, and group-owned by their primary
-    group.
+    """Every dotfile directly inside a local interactive user's home directory
+    (excluding .forward/.rhost/.netrc, see _DOTFILE_EXCLUDED_NAMES) must be mode
+    644 or more restrictive, owned by that user, and group-owned by their
+    primary group.
     """
     return not _dotfile_violations(facts)
 
@@ -489,9 +456,7 @@ def _evidence_interactive_user_dotfiles(facts: SystemFacts) -> str:
 
 
 def _evaluate_only_root_group_has_gid0(facts: SystemFacts) -> bool:
-    """Real audit: `awk -F: '$3=="0"{print $1}' /etc/group` must return
-    only "root" -- no group other than root may be assigned GID 0.
-    """
+    """No group other than root may have GID 0 in /etc/group."""
     gid0_groups = [fields[0] for fields in _group_fields(facts.group_text) if fields[2] == "0"]
     return gid0_groups == ["root"]
 
@@ -502,11 +467,8 @@ def _evidence_only_root_group_has_gid0(facts: SystemFacts) -> str:
 
 
 def _evaluate_pam_faillock_enabled(facts: SystemFacts) -> bool:
-    """Matches the real audit command (e.g. debian_linux_12's "Ensure
-    pam_faillock module is enabled"): `grep pam_faillock.so
-    /etc/pam.d/common-{auth,account}` -- the module must show up in BOTH
-    files, not just one, since faillock needs an auth hook (to count/deny
-    attempts) and an account hook (to enforce the lockout) to actually work.
+    """pam_faillock.so must appear in BOTH common-auth and common-account: the
+    auth hook counts/denies attempts and the account hook enforces the lockout.
     """
     return "pam_faillock.so" in facts.pam_common_auth and "pam_faillock.so" in facts.pam_common_account
 
@@ -518,8 +480,7 @@ def _evidence_pam_faillock_enabled(facts: SystemFacts) -> str:
 
 
 def _evaluate_pam_pwquality_enabled(facts: SystemFacts) -> bool:
-    """Matches the real audit command: `grep pam_pwquality.so
-    /etc/pam.d/common-password`."""
+    """pam_pwquality.so must appear in /etc/pam.d/common-password."""
     return "pam_pwquality.so" in facts.pam_common_password
 
 
@@ -529,8 +490,7 @@ def _evidence_pam_pwquality_enabled(facts: SystemFacts) -> str:
 
 
 def _evaluate_pam_pwhistory_enabled(facts: SystemFacts) -> bool:
-    """Matches the real audit command: `grep pam_pwhistory.so
-    /etc/pam.d/common-password`."""
+    """pam_pwhistory.so must appear in /etc/pam.d/common-password."""
     return "pam_pwhistory.so" in facts.pam_common_password
 
 
@@ -540,13 +500,10 @@ def _evidence_pam_pwhistory_enabled(facts: SystemFacts) -> str:
 
 
 def _pam_unix_nullok_lines(facts: SystemFacts) -> list[str]:
-    """Lines across common-auth/common-password/common-account that
-    configure pam_unix.so with the nullok argument -- nullok is what lets
-    an account with an empty password field authenticate with no password
-    at all. The real audit (e.g. debian_linux_12's "Ensure pam_unix does
-    not include nullok") also checks common-session and
-    common-session-noninteractive, but facts.SystemFacts doesn't collect
-    those two files -- see the final summary for that gap.
+    """Lines across common-auth/common-password/common-account that configure
+    pam_unix.so with the nullok argument, which lets an account with an empty
+    password authenticate. common-session and common-session-noninteractive are
+    not collected by facts.SystemFacts, so they are not inspected.
     """
     offending = []
     for text in (facts.pam_common_auth, facts.pam_common_password, facts.pam_common_account):
@@ -574,8 +531,7 @@ def parse_pwquality_conf(text: str) -> dict[str, str]:
     win, same convention as parse_login_defs()). Boolean-style options like
     enforce_for_root appear on their own line with no "=" at all; those map
     to "" so a plain membership check (`"enforce_for_root" in directives`)
-    is enough to detect them, matching the real audit's `grep
-    '^\\h*enforce_for_root\\b'`.
+    is enough to detect them.
     """
     directives = {}
     for line in text.splitlines():
@@ -588,10 +544,8 @@ def parse_pwquality_conf(text: str) -> dict[str, str]:
 
 
 def _evaluate_pwquality_enforce_for_root(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.2.8, "Ensure password quality
-    is enforced for the root user"): `grep -Psi '^\\h*enforce_for_root\\b'
-    /etc/security/pwquality.conf ...` -- presence of the directive is what's
-    checked, not a value (it's a bare flag).
+    """`enforce_for_root` must be present in pwquality.conf (or its .d drop-ins).
+    Presence of the bare flag is what's checked, not a value.
     """
     return "enforce_for_root" in parse_pwquality_conf(facts.pwquality_text)
 
@@ -602,10 +556,7 @@ def _evidence_pwquality_enforce_for_root(facts: SystemFacts) -> str:
 
 
 def _evaluate_pwquality_minlen(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.2.2): `grep -Psi
-    '^\\h*minlen\\h*=\\h*(1[4-9]|[2-9][0-9]|[1-9][0-9]{2,})\\b'
-    /etc/security/pwquality.conf`, i.e. minlen must be set and >= 14.
-    """
+    """minlen must be set in pwquality.conf and be >= 14."""
     value = parse_pwquality_conf(facts.pwquality_text).get("minlen")
     if value is None:
         return False
@@ -620,15 +571,11 @@ def _evidence_pwquality_minlen(facts: SystemFacts) -> str:
     return f"pwquality.conf: minlen {value}"
 
 
-# The real audit (control 5.3.3.2.3, "Ensure password complexity is
-# configured") just greps for minclass/[dulo]credit and asks a human to
-# judge "conforms to local site policy" against its own example
-# (minclass=3, or ucredit=-2/lcredit=-2/dcredit=-1/ocredit=0) -- there's no
-# single documented pass/fail threshold to lift verbatim, so this evaluator
-# adopts that example as the threshold: either minclass requires at least 3
-# character classes, or at least 3 of the 4 [dulo]credit knobs are set to
-# mandatory (negative) with none left positive (positive relaxes, rather
-# than tightens, pam_pwquality's default policy).
+# No single documented threshold exists for complexity, so this evaluator
+# adopts one: either minclass requires at least 3 character classes, or at
+# least 3 of the 4 [dulo]credit knobs are set to mandatory (negative) with
+# none left positive (positive relaxes, rather than tightens, pam_pwquality's
+# default policy).
 _PWQUALITY_CREDIT_KEYS = ("dcredit", "ucredit", "lcredit", "ocredit")
 
 
@@ -666,10 +613,8 @@ def _evidence_pwquality_complexity(facts: SystemFacts) -> str:
 
 
 def _evaluate_pwquality_max_repeat(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.2.4, "Ensure password same
-    consecutive characters is configured"): maxrepeat must be set, 3 or
-    less, and not 0 (0 disables the check entirely per pwquality.conf's own
-    documentation).
+    """maxrepeat must be set, 3 or less, and not 0 (0 disables the check per
+    pwquality.conf's own documentation).
     """
     value = parse_pwquality_conf(facts.pwquality_text).get("maxrepeat")
     if value is None:
@@ -687,10 +632,7 @@ def _evidence_pwquality_max_repeat(facts: SystemFacts) -> str:
 
 
 def _evaluate_pwquality_max_sequence(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.2.5, "Ensure password maximum
-    sequential characters is configured"): maxsequence must be set, 3 or
-    less, and not 0 -- same shape as maxrepeat above.
-    """
+    """maxsequence must be set, 3 or less, and not 0 -- same shape as maxrepeat."""
     value = parse_pwquality_conf(facts.pwquality_text).get("maxsequence")
     if value is None:
         return False
@@ -707,9 +649,7 @@ def _evidence_pwquality_max_sequence(facts: SystemFacts) -> str:
 
 
 def _evaluate_pwquality_difok(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.2.1, "Ensure password number of
-    changed characters is configured"): difok must be set and >= 2.
-    """
+    """difok must be set and >= 2."""
     value = parse_pwquality_conf(facts.pwquality_text).get("difok")
     if value is None:
         return False
@@ -740,15 +680,10 @@ def _pam_pwhistory_remember(facts: SystemFacts) -> int | None:
 
 
 def _evaluate_pwhistory_remember(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.3.1, "Ensure password history
-    remember is configured"): remember must be >= 24. The real audit text
-    documents two valid locations that drift by document -- debian_linux_11
-    and ubuntu_linux_20_04/22_04/24_04 only document the pam_pwhistory.so
-    remember=<N> argument on common-password's pwhistory line; debian_linux_
-    12/13 (and ubuntu_linux_24_04, as a fallback) also accept /etc/security/
-    pwhistory.conf's own remember= directive. Both are checked here -- either
-    one meeting the threshold passes, matching how the real audit treats
-    them as interchangeable.
+    """remember must be >= 24. It is read from the pam_pwhistory.so `remember=<N>`
+    argument on common-password's pwhistory line, or from /etc/security/
+    pwhistory.conf's own `remember=` directive; either one meeting the
+    threshold passes.
     """
     conf_value = parse_pwquality_conf(facts.pwhistory_text).get("remember")
     if conf_value is not None:
@@ -769,9 +704,8 @@ def _evidence_pwhistory_remember(facts: SystemFacts) -> str:
 
 
 def _evaluate_pwhistory_enforce_for_root(facts: SystemFacts) -> bool:
-    """Matches the real audit (control 5.3.3.3.2, "Ensure password history
-    is enforced for the root user") -- same two-location split as
-    _evaluate_pwhistory_remember() above, for the same reason.
+    """Same two-location split as _evaluate_pwhistory_remember(): the root
+    enforcement flag may sit in pwhistory.conf or on the pam_pwhistory.so line.
     """
     if "enforce_for_root" in parse_pwquality_conf(facts.pwhistory_text):
         return True
@@ -785,12 +719,10 @@ def _evidence_pwhistory_enforce_for_root(facts: SystemFacts) -> str:
 
 
 # Group H: pam_faillock lockout policy, via faillock.conf + pam_faillock.so's
-# own inline arguments on /etc/pam.d/common-auth. Every real audit here has
-# the same two-part shape as pwhistory_remember above: a faillock.conf
-# directive, AND (if pam_faillock.so also sets the same argument inline on
-# common-auth) that inline value must independently not fall in a disallowed
-# range -- confirmed identical grep patterns/thresholds across all 6 target
-# documents (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04).
+# own inline arguments on /etc/pam.d/common-auth. Each check has the same
+# two-part shape as pwhistory_remember above: a faillock.conf directive, AND
+# (if pam_faillock.so also sets the same argument inline on common-auth) that
+# inline value must independently not fall in a disallowed range.
 _FAILLOCK_UNLOCK_TIME_BAD_RE = re.compile(r"(?<!root_)unlock_time\s*=\s*([1-9]|[1-9][0-9]|[1-8][0-9]{2})\b")
 _FAILLOCK_DENY_BAD_RE = re.compile(r"deny\s*=\s*(0|[6-9]|[1-9][0-9]+)\b")
 _FAILLOCK_ROOT_UNLOCK_TIME_BAD_RE = re.compile(r"root_unlock_time\s*=\s*([1-9]|[1-5][0-9])\b")
@@ -805,11 +737,10 @@ def _pam_faillock_lines(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_password_unlock_time(facts: SystemFacts) -> bool:
-    """Matches the real audit ("Ensure password unlock time is configured"):
-    faillock.conf's unlock_time must be 0 (never) or >= 900 (15 minutes) if
-    set at all -- absent is the compliant default. AND, if pam_faillock.so's
-    own unlock_time= argument is set inline on common-auth, that value must
-    not fall in the disallowed 1-899 range either.
+    """faillock.conf's unlock_time must be 0 (never) or >= 900 (15 minutes) if set
+    at all -- absent is acceptable. AND, if pam_faillock.so's own unlock_time=
+    argument is set inline on common-auth, it must not fall in the disallowed
+    1-899 range either.
     """
     value = parse_pwquality_conf(facts.faillock_text).get("unlock_time")
     if value is not None:
@@ -829,11 +760,9 @@ def _evidence_password_unlock_time(facts: SystemFacts) -> str:
 
 
 def _evaluate_password_failed_attempts_lockout(facts: SystemFacts) -> bool:
-    """Matches the real audit ("Ensure password failed attempts lockout is
-    configured"): faillock.conf's deny must be in 1-5 if set at all (absent
-    is the compliant default, same precedent as pwquality/pwhistory checks
-    above). AND pam_faillock.so's own inline deny= argument, if set, must
-    not be 0 or >= 6.
+    """faillock.conf's deny must be in 1-5 if set at all (absent is acceptable,
+    same precedent as the pwquality/pwhistory checks above). AND
+    pam_faillock.so's own inline deny= argument, if set, must not be 0 or >= 6.
     """
     value = parse_pwquality_conf(facts.faillock_text).get("deny")
     if value is not None:
@@ -853,12 +782,11 @@ def _evidence_password_failed_attempts_lockout(facts: SystemFacts) -> str:
 
 
 def _evaluate_password_lockout_includes_root(facts: SystemFacts) -> bool:
-    """Matches the real audit ("Ensure password failed attempts lockout
-    includes root account"): faillock.conf must set even_deny_root and/or
-    root_unlock_time. If root_unlock_time is set, it must be 0 or >= 60
-    (disallowed range 1-59). Same secondary check as the other two: if
-    pam_faillock.so's own root_unlock_time= argument is set inline on
-    common-auth, it must not fall in that disallowed range either.
+    """faillock.conf must set even_deny_root and/or root_unlock_time. If
+    root_unlock_time is set, it must be 0 or >= 60 (disallowed range 1-59).
+    Same secondary check as the other two: if pam_faillock.so's own
+    root_unlock_time= argument is set inline on common-auth, it must not fall in
+    that disallowed range either.
     """
     directives = parse_pwquality_conf(facts.faillock_text)
     if "even_deny_root" not in directives and "root_unlock_time" not in directives:
@@ -905,12 +833,10 @@ def parse_login_defs(text: str) -> dict[str, str]:
 
 
 def _evaluate_default_umask(facts: SystemFacts) -> bool:
-    """Matches the real audit command (e.g. debian_linux_12's "Ensure
-    default user umask is configured"): `grep UMASK /etc/login.defs`,
-    value must be 027 or more restrictive. "More restrictive" means at
-    least those bits are masked (denied) -- checking `umask & 0o027 ==
-    0o027` accepts 027 itself and anything stricter (037, 077, ...)
-    without hardcoding a single allowed value.
+    """UMASK in /etc/login.defs must be 027 or more restrictive. "More
+    restrictive" means at least those bits are masked -- `umask & 0o027 ==
+    0o027` accepts 027 itself and anything stricter (037, 077, ...) without
+    hardcoding a single allowed value.
     """
     value = parse_login_defs(facts.login_defs_text).get("UMASK")
     if value is None:
@@ -941,13 +867,7 @@ def _evidence_ssh_max_sessions(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_log_level(facts: SystemFacts) -> bool:
-    """Matches the real audit condition (control 5.1.14 in our two demo
-    documents): "verify that output matches loglevel VERBOSE or loglevel
-    INFO" -- both are accepted, not just INFO. (Some older CIS documents,
-    e.g. ubuntu_linux_12_04/14_04, have a stricter "LogLevel is set to
-    INFO" control that rejects VERBOSE -- that's a different control with
-    different pass criteria, not merged in here.)
-    """
+    """LogLevel must be VERBOSE or INFO (both accepted, not just INFO)."""
     return facts.sshd_config.get("loglevel", "").lower() in ("info", "verbose")
 
 
@@ -966,14 +886,9 @@ def _evidence_ssh_use_pam(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_disable_forwarding(facts: SystemFacts) -> bool:
-    """This is the modern replacement for the CIS "AllowTcpForwarding is
-    disabled" control originally scoped for this check: both of our real
-    demo documents (debian_linux_11, ubuntu_linux_20_04) use a single
-    DisableForwarding directive (OpenSSH 8.7+) that disables all forwarding
-    types at once, not per-directive AllowTcpForwarding/AllowAgentForwarding
-    controls -- "Ensure SSH AllowTcpForwarding is disabled" doesn't exist as
-    a title in either document (confirmed via Postgres), so it was dropped
-    in favor of this real, resolvable control.
+    """Checks the single DisableForwarding directive (OpenSSH 8.7+), which
+    disables all forwarding types at once, rather than the per-directive
+    AllowTcpForwarding/AllowAgentForwarding settings.
     """
     return facts.sshd_config.get("disableforwarding", "").lower() == "yes"
 
@@ -983,12 +898,11 @@ def _evidence_ssh_disable_forwarding(facts: SystemFacts) -> str:
     return f"sshd_config: DisableForwarding {value}"
 
 
-# Ciphers flagged "weak" by the real CIS audit regex (control 5.1.6):
-# cbc-mode 3des/blowfish/cast128/aes, arcfour variants, an old rijndael-cbc
-# alias, and chacha20-poly1305@openssh.com (flagged for CVE-2023-48795,
-# the Terrapin attack, unless patched -- treated as weak here since the
-# audit command itself flags it unconditionally and a patch level isn't
-# something facts.py collects).
+# Ciphers treated as weak: cbc-mode 3des/blowfish/cast128/aes, arcfour
+# variants, an old rijndael-cbc alias, and chacha20-poly1305@openssh.com
+# (flagged for CVE-2023-48795, the Terrapin attack, unless patched -- treated
+# as weak unconditionally here since a patch level isn't something facts.py
+# collects).
 _WEAK_CIPHER_RE = re.compile(
     r"^(3des|blowfish|cast128|aes(128|192|256))-cbc$"
     r"|^arcfour(128|256)?$"
@@ -1009,10 +923,8 @@ def _evidence_ssh_ciphers(facts: SystemFacts) -> str:
     return f"sshd_config: Ciphers {value}"
 
 
-# Key exchange algorithms flagged "weak" by the real CIS audit (control
-# 5.1.12) -- the plain "weak KexAlgorithms" control that applies to our
-# demo documents, not the separate FIPS-validated-allowlist variant (only
-# present in *_stig documents, which aren't among our demo targets).
+# Key exchange algorithms treated as weak. This is a plain weak-algorithm
+# denylist, not a FIPS-validated allowlist.
 _WEAK_KEX_ALGORITHMS = {
     "diffie-hellman-group1-sha1",
     "diffie-hellman-group14-sha1",
@@ -1047,13 +959,10 @@ _PUBLIC_HOST_KEY_PATHS = [
 
 
 def _evaluate_ssh_private_host_key_permissions(facts: SystemFacts) -> bool:
-    """Mode 0600 or more restrictive, owned by root, for each private host
-    key file that exists -- a simplified version of the real CIS audit
-    script, which also accepts group-owned 0640 for a dedicated
-    ssh_keys/_ssh group; none of our demo targets use that group, so it's
-    not modeled here. A target with no host key files present passes (same
-    as the real audit script's "No openSSH private keys found" -> PASS),
-    since that's a "nothing to secure" state, not a misconfiguration.
+    """Mode 0600 or more restrictive, owned by root, for each private host key
+    file that exists -- a simplified rule that does not accept a group-owned
+    0640 for a dedicated ssh key group. A target with no host key files present
+    passes, since that's a "nothing to secure" state, not a misconfiguration.
     """
     present = [facts.file_stats[p] for p in _PRIVATE_HOST_KEY_PATHS if facts.file_stats.get(p) and facts.file_stats[p].mode is not None]
     if not present:
@@ -1071,9 +980,9 @@ def _evidence_ssh_private_host_key_permissions(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_public_host_key_permissions(facts: SystemFacts) -> bool:
-    """Mode 0644 or more restrictive, owned by root:root, for each public
-    host key file that exists. Same "nothing to secure" PASS as the private
-    key check when no host key files are present.
+    """Mode 0644 or more restrictive, owned by root:root, for each public host
+    key file that exists. Same "nothing to secure" PASS as the private key
+    check when no host key files are present.
     """
     present = [facts.file_stats[p] for p in _PUBLIC_HOST_KEY_PATHS if facts.file_stats.get(p) and facts.file_stats[p].mode is not None]
     if not present:
@@ -1091,13 +1000,12 @@ def _evidence_ssh_public_host_key_permissions(facts: SystemFacts) -> str:
 
 
 def _packages_absent(facts: SystemFacts, *names: str) -> bool:
-    """True if none of `names` are in the collected package set -- the
-    shared shape behind every "package X is not installed" check below.
-    Some CIS documents ask for more than one package name to cover a
-    rename/alternate across releases (e.g. "telnet" vs "inetutils-telnet");
-    passing every known name and requiring all of them absent is a safe
-    superset of the single-name audits, since on a genuinely clean system
-    every name in the set is absent anyway.
+    """True if none of `names` are in the collected package set -- the shared
+    shape behind every "package X is not installed" check below. Some packages
+    are renamed across releases (e.g. "telnet" vs "inetutils-telnet"); passing
+    every known name and requiring all of them absent is a safe superset of a
+    single-name check, since on a genuinely clean system every name in the set
+    is absent anyway.
     """
     return not any(name in facts.installed_packages for name in names)
 
@@ -1193,10 +1101,7 @@ def _evidence_prelink_not_installed(facts: SystemFacts) -> str:
 
 
 # Group K: package presence -- the opposite direction of the "not installed"
-# checks above, same installed_packages field. "Ensure ufw is installed" is
-# the only one of 3 candidates that resolves for all 6 real target documents
-# (confirmed via Postgres); the other two were dropped -- see the comment
-# above the Group K CHECKS entries near the end of this list.
+# checks above, same installed_packages field (ufw).
 def _evaluate_ufw_installed(facts: SystemFacts) -> bool:
     return "ufw" in facts.installed_packages
 
@@ -1206,18 +1111,12 @@ def _evidence_ufw_installed(facts: SystemFacts) -> str:
     return f"installed_packages: ufw {'present' if present else 'absent'}"
 
 
-# Group M: unused network service packages, batch A (round 2). Same
-# "package must NOT be installed" shape as the client-side checks above,
-# just server-side daemons -- confirmed via Postgres audit text across all
-# 6 target documents (debian_linux_11/12/13, ubuntu_linux_20_04/22_04/24_04)
-# that each title's audit opens with a `dpkg-query -s <pkg>` (or, for the
-# renamed dhcp package, a `dpkg-query -l | grep 'kea'` substring match
-# against the real "kea" meta-package) check against the exact package
-# named below -- an "enabled/active" fallback branch follows in the real
-# audit text ("- OR - - IF - the package is required as a dependency:
-# ...systemctl is-enabled/is-active...") but facts.py doesn't collect
-# systemd unit state, so (same as every other package-absent check in this
-# file) only the package-installed condition is evaluated here.
+# Group M: unused network service packages, batch A. Same "package must NOT
+# be installed" shape as the client-side checks above, just server-side
+# daemons. Any "installed but disabled" exemption is not modeled, since
+# facts.py doesn't collect systemd unit state: only the package-installed
+# condition is evaluated here, like every other package-absent check in this
+# file.
 def _evaluate_avahi_not_in_use(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "avahi-daemon")
 
@@ -1236,9 +1135,8 @@ def _evidence_bluetooth_not_in_use(facts: SystemFacts) -> str:
     return f"installed_packages: bluez {'present' if present else 'absent'}"
 
 
-# isc-dhcp-server (debian_11, ubuntu_20_04, ubuntu_22_04) was replaced by
-# kea (debian_12, debian_13, ubuntu_24_04) -- confirmed via Postgres, same
-# split as telnet/inetutils-telnet above. Both must be absent to PASS.
+# isc-dhcp-server was replaced by kea in newer releases (same split as
+# telnet/inetutils-telnet above). Both must be absent to PASS.
 def _evaluate_dhcp_server_not_in_use(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "isc-dhcp-server", "kea")
 
@@ -1266,17 +1164,9 @@ def _evidence_dnsmasq_not_in_use(facts: SystemFacts) -> str:
     return f"installed_packages: dnsmasq {'present' if present else 'absent'}"
 
 
-# ubuntu_linux_22_04's audit text for this control has an internal
-# copy/paste glitch: its opening line still says "verify vsftpd is not
-# installed", but the dpkg-query command pasted under it greps for
-# "ftp"/"tnftp" -- the FTP *client* packages, i.e. the same audit command
-# already used for the unrelated "Ensure ftp client is not installed"
-# control (_evaluate_ftp_client_not_installed above). Everything else in
-# that same document's audit block (the "- OR -" is-enabled/is-active
-# fallback, the closing notes) keeps referring to "vsftpd service", and
-# all other 5 documents check vsftpd cleanly -- so this is treated as a
-# PDF extraction artifact in that one document, not a genuinely different
-# condition, and vsftpd is checked uniformly across all 6.
+# One of the supported documents describes this check with an FTP *client*
+# package list instead of vsftpd, which is treated as a documentation
+# artifact; vsftpd is checked uniformly on every target.
 def _evaluate_ftp_server_not_in_use(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "vsftpd")
 
@@ -1295,10 +1185,9 @@ def _evidence_ldap_server_not_in_use(facts: SystemFacts) -> str:
     return f"installed_packages: slapd {'present' if present else 'absent'}"
 
 
-# Two distinct real packages (IMAP and POP3 servers), not name-drift
-# aliases like isc-dhcp-server/kea above -- the real audit checks each
-# with its own separate dpkg-query line, and either one present is a
-# finding, so both must be absent to PASS.
+# Two distinct packages (IMAP and POP3 servers), not name-drift aliases
+# like isc-dhcp-server/kea above: either one present is a finding, so both
+# must be absent to PASS.
 def _evaluate_message_access_server_not_in_use(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "dovecot-imapd", "dovecot-pop3d")
 
@@ -1326,17 +1215,11 @@ def _evidence_nis_server_not_in_use(facts: SystemFacts) -> str:
     return f"installed_packages: ypserv {'present' if present else 'absent'}"
 
 
-# Group I: auditd config/tooling file ownership + rules immutability. Real
-# audit commands (e.g. debian_linux_11 6.4.4.6/6.4.4.7/6.4.4.9/6.4.4.10)
-# check a whole file set -- `find /etc/audit/ -type f ( *.conf -o *.rules )
-# ! -user root` for config files, `stat -Lc "%n %U" /sbin/auditctl
-# /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/augenrules`
-# for tools -- wider than what facts._STAT_PATHS collects (no
+# Group I: auditd config/tooling file ownership + rules immutability. The
+# file sets are wider than what facts._STAT_PATHS collects (no
 # /etc/audit/auditd.conf, no /sbin/aureport, /sbin/ausearch, /sbin/autrace).
 # _owner_ok() below checks ownership only over the subset of each set that
-# facts.py actually stats; a facts.py extension to add the missing paths
-# would tighten this, but isn't needed to exercise the real behavior these
-# controls care about (are the audit config/tool files root-owned).
+# facts.py actually stats; adding the missing paths would tighten the checks.
 _AUDIT_CONFIG_PATHS = ["/etc/audit/audit.rules", "/etc/audit/rules.d"]
 _AUDIT_TOOL_PATHS = ["/sbin/auditctl", "/sbin/auditd", "/sbin/augenrules"]
 
@@ -1406,14 +1289,12 @@ def _evaluate_audit_tools_group_owner(facts: SystemFacts) -> bool:
 _evidence_audit_tools_group_owner = _evidence_for_stats(_AUDIT_TOOL_PATHS)
 
 
-# Real audit (e.g. debian_linux_11 6.4.3.20): `grep -Ph -- '^\h*-e\h+2\b'
-# /etc/audit/rules.d/*.rules | tail -1` must print "-e 2" -- the immutable
-# flag has to be the last line loaded so no further rule changes can take
-# effect without a reboot. facts.audit_rules_text concatenates
-# rules.d/*.rules then audit.rules (the latter is generated from the
-# former by augenrules on a working system, so they agree); a simple
-# presence check over that combined text is equivalent here since the
-# pattern only ever matches an actual "-e 2" line.
+# The immutable flag (`-e 2`) must be present in the audit rules, so no
+# further rule changes can take effect without a reboot.
+# facts.audit_rules_text concatenates rules.d/*.rules then audit.rules (the
+# latter is generated from the former by augenrules on a working system, so
+# they agree); a simple presence check over that combined text is equivalent
+# here since the pattern only ever matches an actual "-e 2" line.
 _AUDIT_IMMUTABLE_RE = re.compile(r"^\s*-e\s+2\b", re.MULTILINE)
 
 
@@ -1429,25 +1310,18 @@ def _evidence_audit_config_immutable(facts: SystemFacts) -> str:
 
 
 def _sudoers_active_lines(text: str) -> list[str]:
-    """Non-blank, non-comment lines from /etc/sudoers text -- comment
-    detection follows the same "strip, then check for a leading #" rule as
-    the pam_unix nullok check above, not the real audit's stricter
-    "^[^#]" grep (which would also flag an indented "  # ..." line as
-    active) -- same posture already established in this module.
+    """Non-blank, non-comment lines from /etc/sudoers text -- comment detection
+    follows the same "strip, then check for a leading #" rule as the pam_unix
+    nullok check above, so an indented "  # ..." line is not treated as active.
     """
     return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
 
 
 def _evaluate_sudo_no_nopasswd(facts: SystemFacts) -> bool:
-    """Real audit (control 5.2.4, e.g. debian_linux_12's "Ensure users
-    must provide password for escalation"; debian_linux_11/ubuntu_20_04
-    word it "...for privilege escalation"): `grep -r "^[^#].*NOPASSWD"
-    /etc/sudoers*` must return nothing -- no active sudoers line may grant
-    NOPASSWD privilege escalation. facts.py only collects /etc/sudoers
-    itself, not /etc/sudoers.d/* -- a drop-in NOPASSWD rule there would be
-    invisible to this check, same "known gap" posture as the nullok
-    check's missing common-session files (see module docstring notes
-    below the CHECKS list).
+    """No active sudoers line may grant NOPASSWD privilege escalation. facts.py
+    only collects /etc/sudoers itself, not /etc/sudoers.d/* -- a drop-in
+    NOPASSWD rule there is invisible to this check, same known gap as the
+    nullok check's missing common-session files.
     """
     return not any("NOPASSWD" in line for line in _sudoers_active_lines(facts.sudoers_text))
 
@@ -1460,12 +1334,8 @@ def _evidence_sudo_no_nopasswd(facts: SystemFacts) -> str:
 
 
 def _evaluate_sudo_reauthentication_required(facts: SystemFacts) -> bool:
-    """Real audit (control 5.2.5, "Ensure re-authentication for privilege
-    escalation is not disabled globally" -- identical title text in all 6
-    real target documents): `grep -r "^[^#].*\\!authenticate"
-    /etc/sudoers*` must return nothing -- no active line may carry a
-    !authenticate tag, which lets a user run sudo without re-entering
-    their password at all.
+    """No active sudoers line may carry a !authenticate tag, which lets a user run
+    sudo without re-entering their password at all.
     """
     return not any("!authenticate" in line for line in _sudoers_active_lines(facts.sudoers_text))
 
@@ -1481,10 +1351,7 @@ _SUDO_LOGFILE_RE = re.compile(r"(?i)^Defaults\b.*\blogfile\s*=\s*\S")
 
 
 def _evaluate_sudo_log_file_exists(facts: SystemFacts) -> bool:
-    """Real audit (control 5.2.3, "Ensure sudo log file exists" --
-    identical title text in all 6 real target documents): grep for a
-    `Defaults ... logfile=...` line in /etc/sudoers*.
-    """
+    """/etc/sudoers must contain a `Defaults ... logfile=...` line."""
     return any(_SUDO_LOGFILE_RE.match(line) for line in _sudoers_active_lines(facts.sudoers_text))
 
 
@@ -1493,13 +1360,11 @@ def _evidence_sudo_log_file_exists(facts: SystemFacts) -> str:
     return f"sudoers: {match}" if match else "sudoers: no Defaults logfile= line found"
 
 
-# Group H: cron file/directory permissions. Same real audit shape as
-# _permissions_ok's other users -- stat mode <= a ceiling, Uid 0/root, Gid
-# 0/root -- just a 0600 ceiling for the /etc/crontab file and a 0700
-# ceiling for the five cron.* directories (confirmed against live
-# containers: openssh-server-style packaged defaults are 644/755, i.e.
-# world-readable and non-compliant out of the box, the same gotcha already
-# noted for sshd_config's own file permissions).
+# Group H: cron file/directory permissions. Same shape as _permissions_ok's
+# other users -- stat mode <= a ceiling, uid 0/root, gid 0/root -- with a
+# 0600 ceiling for /etc/crontab and a 0700 ceiling for the five cron.*
+# directories (packaged defaults are 644/755, i.e. non-compliant out of the
+# box, the same gotcha as sshd_config's own file permissions).
 def _evaluate_crontab_permissions(facts: SystemFacts) -> bool:
     return _permissions_ok(facts, "/etc/crontab", 0o600, ("root",))
 
@@ -1563,8 +1428,7 @@ def parse_journald_conf(text: str) -> dict[str, str]:
 
 
 def _evaluate_journald_compress(facts: SystemFacts) -> bool:
-    """Matches the real audit command (identical across all 6 target
-    documents): `grep -Psi "^Compress=yes" /etc/systemd/journald.conf`."""
+    """journald.conf must contain `Compress=yes`."""
     return parse_journald_conf(facts.journald_text).get("compress", "").lower() == "yes"
 
 
@@ -1574,8 +1438,7 @@ def _evidence_journald_compress(facts: SystemFacts) -> str:
 
 
 def _evaluate_journald_storage(facts: SystemFacts) -> bool:
-    """Matches the real audit command: `grep -Psi "^Storage=persistent"
-    /etc/systemd/journald.conf`."""
+    """journald.conf must contain `Storage=persistent`."""
     return parse_journald_conf(facts.journald_text).get("storage", "").lower() == "persistent"
 
 
@@ -1584,14 +1447,11 @@ def _evidence_journald_storage(facts: SystemFacts) -> str:
     return f"journald.conf: Storage={value}"
 
 
-# The 5 log-rotation parameters the real audit greps for (control
-# "Ensure journald log file rotation is configured"): `systemd-analyze
-# cat-config systemd/journald.conf | ... grep -Psi --
-# '\b(SystemMaxUse|SystemKeepFree|RuntimeMaxUse|RuntimeKeepFree|MaxFileSec)='`
-# then asks a human to "verify logs are rotated according to site policy" --
-# there's no single canonical value (it's site-policy-dependent), so the
-# check models the audit's own bar: at least one of these directives is
-# explicitly set to a non-empty value, not left at journald's defaults.
+# Log-rotation parameters: SystemMaxUse, SystemKeepFree, RuntimeMaxUse,
+# RuntimeKeepFree and MaxFileSec. There is no single canonical value (it is
+# site-policy-dependent), so the check requires that at least one of these
+# directives is explicitly set to a non-empty value, not left at journald's
+# defaults.
 _JOURNALD_ROTATION_KEYS = (
     "systemmaxuse",
     "systemkeepfree",
@@ -1614,9 +1474,9 @@ def _evidence_journald_log_rotation(facts: SystemFacts) -> str:
     return "journald.conf: none of SystemMaxUse/SystemKeepFree/RuntimeMaxUse/RuntimeKeepFree/MaxFileSec are set"
 
 
-# The real audit greps for `/nologin\b` (word boundary) on non-comment
-# lines of /etc/shells -- catches both /sbin/nologin and /usr/sbin/nologin
-# style paths, not just a literal "nologin" shell name.
+# Lines of /etc/shells are matched on `/nologin\b` (word boundary), which
+# catches both /sbin/nologin and /usr/sbin/nologin style paths, not just a
+# literal "nologin" shell name.
 _NOLOGIN_RE = re.compile(r"/nologin\b")
 
 
@@ -1641,13 +1501,10 @@ def _evidence_shells_no_nologin(facts: SystemFacts) -> str:
 
 
 def _evaluate_etc_motd_permissions(facts: SystemFacts) -> bool:
-    """Real audit (e.g. debian_linux_11's 1.6.4): '[ -e /etc/motd ] && stat
-    ... -- OR -- Nothing is returned' -- unlike the Group A files (which
-    are always expected to exist), a missing /etc/motd is an explicitly
-    documented PASS, not a fail-closed condition (confirmed empirically:
-    plain ubuntu:22.04 ships with no /etc/motd at all). Permission
-    comparison itself reuses _permissions_ok(), same as every other
-    file-permission check.
+    """A missing /etc/motd is a PASS (nothing to protect; plain ubuntu:22.04 ships
+    without one), unlike the files that are always expected to exist. When the
+    file exists, the permission comparison reuses _permissions_ok(), same as
+    every other file-permission check.
     """
     stat = facts.file_stats.get("/etc/motd")
     if stat is None or stat.mode is None:
@@ -1663,16 +1520,13 @@ def _evidence_etc_motd_permissions(facts: SystemFacts) -> str:
 
 
 def _evaluate_bootloader_config_permissions(facts: SystemFacts) -> bool:
-    """Real audit (e.g. debian_linux_12's 1.4.2): stat /boot/grub/grub.cfg,
-    verify Uid/Gid both 0/root and mode 0600 or more restrictive -- unlike
-    /etc/motd, there's no documented "file absent -> PASS" clause here, so
-    a missing/unreadable file fails closed via _permissions_ok() (same
-    posture as the shadow/passwd family): an unprotected or absent
-    bootloader config can't be verified secure. Confirmed empirically that
-    bare debian:12/ubuntu:22.04 images ship with no /boot/grub/grub.cfg at
-    all (no bootloader installed in a container) -- this is exercised by a
-    throwaway container with a fake grub.cfg created for validation, not by
-    the real demo targets, which will all report FAIL for this reason.
+    """/boot/grub/grub.cfg must be uid/gid 0/root and mode 0600 or more
+    restrictive. Unlike /etc/motd, a missing or unreadable file fails closed
+    via _permissions_ok() (same posture as the shadow/passwd family): an absent
+    bootloader config can't be verified secure. Bare debian:12/ubuntu:22.04
+    images ship without /boot/grub/grub.cfg (no bootloader in a container), so
+    the fixture targets report FAIL for this check; it is exercised in tests
+    with a fake grub.cfg.
     """
     return _permissions_ok(facts, "/boot/grub/grub.cfg", 0o600, ("root",))
 
@@ -1685,11 +1539,10 @@ _evidence_bootloader_config_permissions = _evidence_for_stat("/boot/grub/grub.cf
 # login.defs password hashing algorithm). Two assigned candidates were
 # dropped -- see the final summary below the CHECKS list.
 
-# MACs flagged "weak" by the real CIS audit regex (control 5.1.15/5.1.16):
-# broken/short-digest HMACs and the umac-64 family, with or without
-# Encrypt-Then-Mac -- same "flagged unconditionally regardless of patch
-# level" posture as _WEAK_CIPHER_RE above (CVE-2023-48795 note applies to
-# the etm variants here too).
+# MACs treated as weak: broken/short-digest HMACs and the umac-64 family, with
+# or without Encrypt-Then-Mac -- same "flagged unconditionally regardless of
+# patch level" posture as _WEAK_CIPHER_RE above (the CVE-2023-48795 note
+# applies to the etm variants here too).
 _WEAK_MACS = {
     "hmac-md5",
     "hmac-md5-96",
@@ -1719,11 +1572,8 @@ def _evidence_ssh_macs(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_max_startups(facts: SystemFacts) -> bool:
-    """Real audit (control 5.1.17/5.1.18/5.1.19): `sshd -T | awk '$1 ~
-    /^\\s*maxstartups/{split($2, a, ":");{if(a[1] > 10 || a[2] > 30 ||
-    a[3] > 60) print $0}}'` must return nothing -- MaxStartups'
-    "start:rate:full" triple must be 10:30:60 or more restrictive in every
-    field. `sshd -T` always reports it as that colon-separated triple.
+    """MaxStartups' "start:rate:full" triple (as reported by `sshd -T`) must be
+    10:30:60 or more restrictive in every field.
     """
     value = facts.sshd_config.get("maxstartups", "")
     parts = value.split(":")
@@ -1742,10 +1592,8 @@ def _evidence_ssh_max_startups(facts: SystemFacts) -> str:
 
 
 def _evaluate_strong_password_hashing_algorithm(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.1.4): `grep -Pi
-    '^\\h*ENCRYPT_METHOD\\h+(SHA512|yescrypt)\\b' /etc/login.defs` -- case
-    insensitive per the audit's own `-i` flag, so the value is upper-cased
-    before comparing rather than requiring an exact-case match.
+    """ENCRYPT_METHOD in /etc/login.defs must be SHA512 or yescrypt. The match is
+    case-insensitive, so the value is upper-cased before comparing.
     """
     value = parse_login_defs(facts.login_defs_text).get("ENCRYPT_METHOD", "")
     return value.upper() in ("SHA512", "YESCRYPT")
@@ -1761,15 +1609,10 @@ def _pam_unix_present(text: str) -> bool:
 
 
 def _evaluate_pam_unix_enabled(facts: SystemFacts) -> bool:
-    """Real audit (control 5.3.2.1): `grep pam_unix.so /etc/pam.d/common-
-    {account,auth,password,session[,session-noninteractive]}` -- pam_unix.so
-    must show up in every file in that list (4 files on debian_linux_11,
-    5 on every other real target document, which also lists
-    common-session-noninteractive). facts.SystemFacts collects
-    common-auth/common-account/common-password but not common-session or
-    common-session-noninteractive -- same collection gap already called
-    out for _pam_unix_nullok_lines above -- so this checks the 3 available
-    files, a safe subset of the real 4-5 file audit.
+    """pam_unix.so must show up in every PAM file in the list. facts.SystemFacts
+    collects common-auth/common-account/common-password but not common-session
+    or common-session-noninteractive -- same collection gap as
+    _pam_unix_nullok_lines above -- so this checks the 3 available files.
     """
     return (
         _pam_unix_present(facts.pam_common_auth)
@@ -1789,12 +1632,10 @@ _REMEMBER_RE = re.compile(r"\bremember=\d+\b")
 
 
 def _pam_unix_remember_lines(facts: SystemFacts) -> list[str]:
-    """Lines across common-auth/common-password/common-account that
-    configure pam_unix.so with a remember= argument -- remember belongs on
-    pam_pwhistory.so (password history), not pam_unix.so. Real audit
-    (control 5.3.3.4.2) also checks common-session/common-session-
-    noninteractive, which facts.py doesn't collect -- same gap as
-    _pam_unix_nullok_lines above.
+    """Lines across common-auth/common-password/common-account that configure
+    pam_unix.so with a remember= argument -- remember belongs on
+    pam_pwhistory.so (password history), not pam_unix.so. common-session files
+    are not collected by facts.py -- same gap as _pam_unix_nullok_lines above.
     """
     offending = []
     for text in (facts.pam_common_auth, facts.pam_common_password, facts.pam_common_account):
@@ -1820,13 +1661,10 @@ def _pam_unix_password_lines(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_pam_unix_strong_password_hashing(facts: SystemFacts) -> bool:
-    """Real audit (control 5.3.3.4.3): `grep -PH '^\\h*password\\h+
-    ([^#\\n\\r]+)\\h+pam_unix\\.so\\h+([^#\\n\\r]+\\h+)?(sha512|yescrypt)\\b'
-    /etc/pam.d/common-password`. ubuntu_linux_20_04's audit text is
-    narrower here -- it only accepts sha512, not yescrypt (confirmed via
-    Postgres) -- so that one real document is branched on explicitly using
-    facts.os_id/os_version_id (already collected, not a new field); every
-    other real target document accepts both.
+    """The pam_unix.so line in common-password must name sha512 or yescrypt as its
+    hashing algorithm. On ubuntu 20.04 only sha512 is accepted; that one case is
+    branched on explicitly using facts.os_id/os_version_id (already collected,
+    not a new field).
     """
     lines = _pam_unix_password_lines(facts)
     has_sha512 = any("sha512" in line.lower() for line in lines)
@@ -1842,11 +1680,7 @@ def _evidence_pam_unix_strong_password_hashing(facts: SystemFacts) -> str:
 
 
 def _evaluate_pam_unix_use_authtok(facts: SystemFacts) -> bool:
-    """Real audit (control 5.3.3.4.4): `grep -PH '^\\h*password\\h+
-    ([^#\\n\\r]+)\\h+pam_unix\\.so\\h+([^#\\n\\r]+\\h+)?use_authtok\\b'
-    /etc/pam.d/common-password` -- identical wording across every real
-    target document, unlike the hashing-algorithm control above.
-    """
+    """The pam_unix.so line in common-password must carry use_authtok."""
     return any("use_authtok" in line for line in _pam_unix_password_lines(facts))
 
 
@@ -1856,13 +1690,11 @@ def _evidence_pam_unix_use_authtok(facts: SystemFacts) -> str:
 
 
 def _evaluate_pam_pwhistory_use_authtok(facts: SystemFacts) -> bool:
-    """Real audit (control 5.3.3.3.3): either the pam_pwhistory.so line in
-    /etc/pam.d/common-password carries use_authtok, OR (the newer,
-    pam-configs-driven layout used by debian_linux_13/ubuntu_linux_24_04)
-    /etc/security/pwhistory.conf sets use_authtok directly -- either
-    location satisfies the control, matching the real audit's own "- OR/IF
-    -" wording. facts.pwhistory_text (pwhistory.conf) is already collected
-    for the sibling "pam_pwhistory module is enabled" family.
+    """Either the pam_pwhistory.so line in /etc/pam.d/common-password carries
+    use_authtok, OR (the newer, pam-configs-driven layout) /etc/security/
+    pwhistory.conf sets use_authtok directly -- either location passes.
+    facts.pwhistory_text (pwhistory.conf) is already collected for the sibling
+    pam_pwhistory checks.
     """
     pwhistory_lines = [line for line in facts.pam_common_password.splitlines() if "pam_pwhistory.so" in line]
     if any("use_authtok" in line for line in pwhistory_lines):
@@ -1885,13 +1717,10 @@ def _evidence_pam_pwhistory_use_authtok(facts: SystemFacts) -> str:
     )
 
 
-# Group L: sshd_config directives (round 2). Real audit conditions for all
-# 7 confirmed identical across all 6 real target documents (debian_linux_
-# 11/12/13, ubuntu_linux_20_04/22_04/24_04) via Postgres before writing
-# these -- see the CHECKS entries below for per-control notes.
+# Group L: sshd_config directives (round 2); see the CHECKS entries below for
+# per-check notes.
 def _evaluate_ssh_max_auth_tries(facts: SystemFacts) -> bool:
-    """Real audit: `sshd -T | grep maxauthtries`, MaxAuthTries must be 4 or
-    less."""
+    """MaxAuthTries from `sshd -T` must be 4 or less."""
     value = facts.sshd_config.get("maxauthtries", "")
     try:
         return int(value) <= 4
@@ -1932,10 +1761,8 @@ def _evidence_ssh_gssapi_authentication(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_client_alive(facts: SystemFacts) -> bool:
-    """Real audit: `sshd -T | grep -Pi -- '(clientaliveinterval|
-    clientalivecountmax)'`, both must be greater than zero -- one Check,
-    both conditions, since the real audit greps for both directives
-    together and there's no CIS control for either one alone.
+    """Both ClientAliveInterval and ClientAliveCountMax from `sshd -T` must be
+    greater than zero -- one Check, both conditions.
     """
     try:
         interval = int(facts.sshd_config.get("clientaliveinterval", ""))
@@ -1952,14 +1779,10 @@ def _evidence_ssh_client_alive(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_banner(facts: SystemFacts) -> bool:
-    """Partial check: real audit condition has two parts -- (1) Banner is
-    set to an absolute path (`sshd -T | grep -Pi -- '^banner\\h+\\/\\H+'`),
-    and (2), on debian_12/13 and ubuntu_22_04/24_04, that the banner
-    *file's content* doesn't leak OS info (a grep of that file's content
-    against /etc/os-release's ID). facts.py collects sshd_config but not
-    arbitrary banner file content, so only part (1) is checked here --
-    matching this project's existing precedent for "configured" (not
-    "correct value") checks (e.g. _evaluate_pwquality_enforce_for_root,
+    """Partial check: only verifies that Banner is set to an absolute path.
+    The content of the banner file is not collected by facts.py, so it is not
+    inspected. This matches the project's existing precedent for "configured"
+    (not "correct value") checks (e.g. _evaluate_pwquality_enforce_for_root,
     _evaluate_sudo_log_file_exists above), which verify a directive is
     present/set rather than judging site-policy-dependent content.
     """
@@ -1973,13 +1796,10 @@ def _evidence_ssh_banner(facts: SystemFacts) -> str:
 
 
 def _evaluate_ssh_access(facts: SystemFacts) -> bool:
-    """Real audit: `sshd -T | grep -Pi -- '^\\h*(allow|deny)(users|
-    groups)\\h+\\H+'` must match at least one of AllowUsers/AllowGroups/
-    DenyUsers/DenyGroups -- the real audit itself then asks a human to
-    review the actual list against site policy (CIS doesn't prescribe a
-    value), so presence of any one directive is the machine-checkable
-    bar, same "configured, not judged" posture as _evaluate_ssh_banner
-    above.
+    """At least one of AllowUsers/AllowGroups/DenyUsers/DenyGroups must be present
+    in `sshd -T` output. The actual list is site policy, so presence of any one
+    directive is the machine-checkable bar, same "configured, not judged"
+    posture as _evaluate_ssh_banner above.
     """
     return any(
         facts.sshd_config.get(directive, "")
@@ -2005,30 +1825,17 @@ def _evidence_ssh_access(facts: SystemFacts) -> str:
     ]
     return "sshd_config: " + (", ".join(parts) if parts else "none of AllowUsers/AllowGroups/DenyUsers/DenyGroups set")
 # Group N: unused network service packages batch B + required packages
-# (round 2). All 11 titles below confirmed via Postgres to resolve in all 6
-# target documents, audit text read in full for each (not just a snippet).
+# (round 2).
 #
-# Part A (8): same "package must NOT be installed" shape as Group I's
-# _packages_absent-based checks above -- the real audit's dpkg-query check
-# is unconditional, with an "- OR - IF the package is required as a
-# dependency, check its systemd unit isn't enabled/active" fallback branch
-# that every existing _packages_absent check in this file already omits
-# (SystemFacts has no systemd unit-state collection), so this follows the
-# established precedent rather than inventing a new shape.
+# Part A (8): same "package must NOT be installed" shape as the
+# _packages_absent-based checks above, with the same omission of any
+# "installed but disabled" exemption (SystemFacts has no systemd unit-state
+# collection).
 #
 # Part B (3): opposite direction, same installed_packages field.
-#   - "Ensure sudo is installed": confirmed OR across all 6 docs -- each
-#     lists sudo, then "- OR -", then sudo-ldap. (debian_linux_13 also
-#     lists a further libsss-sudo+sssd alternative; not needed since
-#     sudo/sudo-ldap alone already covers the common case identically to
-#     the other 5 docs.)
-#   - "Ensure auditd packages are installed": confirmed AND across all 6
-#     docs -- unlike the sudo control, there is no "- OR -" between the
-#     auditd step and the audispd-plugins step; both are stated as
-#     required verifications with no alternative offered.
-#   - "Ensure AIDE is installed": same AND shape as auditd, confirmed
-#     across all 6 docs -- aide and aide-common are both required
-#     verification steps with no "- OR -" between them.
+#   - sudo: `sudo` OR `sudo-ldap` installed.
+#   - auditd packages: both `auditd` and `audispd-plugins` required (AND).
+#   - AIDE: both `aide` and `aide-common` required (AND).
 def _evaluate_cups_not_installed(facts: SystemFacts) -> bool:
     return _packages_absent(facts, "cups")
 
@@ -2075,10 +1882,9 @@ def _evidence_tftp_server_not_installed(facts: SystemFacts) -> str:
 
 
 def _evaluate_web_proxy_not_installed(facts: SystemFacts) -> bool:
-    """ubuntu_linux_20_04's audit additionally names squid-openssl; the
-    other 5 docs check squid alone. Requiring both absent is a safe
-    superset (same reasoning as _packages_absent's own docstring, and the
-    same pattern already used for telnet/inetutils-telnet and ftp/tnftp).
+    """The Ubuntu 20.04 variant additionally names squid-openssl. Requiring both
+    absent is a safe superset (same reasoning as _packages_absent's own
+    docstring, and the same pattern as telnet/inetutils-telnet and ftp/tnftp).
     """
     return _packages_absent(facts, "squid", "squid-openssl")
 
@@ -2134,29 +1940,16 @@ def _evidence_aide_installed(facts: SystemFacts) -> str:
 
 
 # Group Q: passwd/group consistency (round 2). Reuses _passwd_fields()/
-# _group_fields() from Group B above -- no new parsing helpers, no
-# facts.py changes.
+# _group_fields() from Group B above -- no new parsing helpers, no facts.py
+# changes.
 #
-# "Ensure no duplicate user names exist" was looked at and dropped: its
-# real audit (confirmed via Postgres) is genuinely different in
-# debian_linux_11 vs the other 5 documents. In debian_linux_11 the outer
-# loop reads `cut -f1 -d":" /etc/group` (group names) while the other 5
-# documents read `cut -f1 -d":" /etc/passwd` (user names) under the exact
-# same title and the exact same inner awk. That's a real bug in that one
-# document (looks like a copy/paste from the neighboring "duplicate group
-# names" control), not an intentional wording/scope variant -- there's no
-# way to write one evaluate() that's faithful to debian_linux_11's actual
-# (buggy) audit script and also faithful to the other 5 without either
-# silently "fixing" debian_11's real document or silently mislabeling a
-# group-name check as a user-name check for the other 5. Dropped rather
-# than guessing which side is "right".
+# A duplicate-user-name check was looked at and not implemented: one of the
+# supported documents describes it against /etc/group instead of
+# /etc/passwd, so a single evaluator could not be faithful to both variants.
 
 
 def _evaluate_no_duplicate_uids(facts: SystemFacts) -> bool:
-    """Real audit (all 6 documents, identical): `cut -f3 -d":" /etc/passwd
-    | sort -n | uniq -c` -- fails if any UID (passwd field 3) appears more
-    than once.
-    """
+    """Fails if any UID (passwd field 3) appears more than once."""
     uids = [fields[2] for fields in _passwd_fields(facts.passwd_text)]
     return len(uids) == len(set(uids))
 
@@ -2168,10 +1961,7 @@ def _evidence_no_duplicate_uids(facts: SystemFacts) -> str:
 
 
 def _evaluate_no_duplicate_gids(facts: SystemFacts) -> bool:
-    """Real audit (all 6 documents, identical): `cut -f3 -d":" /etc/group
-    | sort -n | uniq -c` -- fails if any GID (group field 3) appears more
-    than once.
-    """
+    """Fails if any GID (group field 3) appears more than once."""
     gids = [fields[2] for fields in _group_fields(facts.group_text)]
     return len(gids) == len(set(gids))
 
@@ -2183,10 +1973,7 @@ def _evidence_no_duplicate_gids(facts: SystemFacts) -> str:
 
 
 def _evaluate_no_duplicate_group_names(facts: SystemFacts) -> bool:
-    """Real audit (all 6 documents, identical): `cut -f1 -d":" /etc/group
-    | sort -n | uniq -c` -- fails if any group name (group field 1)
-    appears more than once.
-    """
+    """Fails if any group name (group field 1) appears more than once."""
     names = [fields[0] for fields in _group_fields(facts.group_text)]
     return len(names) == len(set(names))
 
@@ -2198,9 +1985,8 @@ def _evidence_no_duplicate_group_names(facts: SystemFacts) -> str:
 
 
 def _evaluate_passwd_groups_exist_in_group(facts: SystemFacts) -> bool:
-    """Real audit (all 6 documents, identical shape): every primary GID
-    referenced in /etc/passwd (field 4) must exist as a GID (field 3) in
-    /etc/group.
+    """Every primary GID referenced in /etc/passwd (field 4) must exist as a GID
+    (field 3) in /etc/group.
     """
     group_gids = {fields[2] for fields in _group_fields(facts.group_text)}
     passwd_gids = {fields[3] for fields in _passwd_fields(facts.passwd_text)}
@@ -2216,10 +2002,9 @@ def _evidence_passwd_groups_exist_in_group(facts: SystemFacts) -> str:
 
 
 def _evaluate_shadow_group_empty(facts: SystemFacts) -> bool:
-    """Real audit (all 6 documents, identical): the `shadow` group's
-    member list (/etc/group field 4) must be empty, AND no account's
-    primary GID (/etc/passwd field 4) may equal the shadow group's GID.
-    Both conditions must hold for PASS.
+    """The `shadow` group's member list (/etc/group field 4) must be empty, AND no
+    account's primary GID (/etc/passwd field 4) may equal the shadow group's
+    GID. Both conditions must hold for PASS.
     """
     shadow_groups = [fields for fields in _group_fields(facts.group_text) if fields[0] == "shadow"]
     if not shadow_groups:
@@ -2250,39 +2035,28 @@ def _evidence_shadow_group_empty(facts: SystemFacts) -> str:
 # Group P: shadow/login.defs/sudoers/pwquality (round 2). Reuses
 # _passwd_fields() (the shared shadow/passwd colon-parser already used by
 # Group B above) and parse_login_defs()/parse_pwquality_conf() -- no new
-# facts.py fields needed, every field these 8 checks read (shadow_text,
-# login_defs_text, shells_text, sudoers_text, pwquality_text,
-# pam_common_password) is already collected. All 8 assigned candidates
-# turned out to be real controls with identical title text, threshold, and
-# audit condition across all 6 real target documents -- none dropped.
+# facts.py fields needed.
 
 
 def _has_real_password(fields: list[str]) -> bool:
-    """Shared by every /etc/shadow control below that only applies to
-    accounts with a real password hash: shadow field 2 (colon index 1)
-    matching `^\\$.+\\$` -- the exact awk test every real audit script in
-    this group uses (`$2~/^\\$.+\\$/`) to skip locked (`!`/`!!`), empty, or
-    `*`-disabled accounts.
+    """Shared by every /etc/shadow check below that only applies to accounts with
+    a real password hash: shadow field 2 (colon index 1) matching `^\\$.+\\$`,
+    which skips locked (`!`/`!!`), empty, or `*`-disabled accounts.
     """
     return len(fields) > 1 and bool(re.match(r"^\$.+\$", fields[1]))
 
 
 def _awk_int(value: str) -> int:
-    """Mirrors awk's own numeric coercion of a bare field reference used by
-    every `if($N > ...)`-style audit below: an empty string (a shadow
-    field genuinely left blank -- INACTIVE/PASS_MAX_DAYS/PASS_WARN_AGE
-    never explicitly set for that account) numifies to 0, not an error.
+    """Mirrors awk's own numeric coercion of a bare field reference: an empty
+    string (a shadow field genuinely left blank -- INACTIVE/PASS_MAX_DAYS/
+    PASS_WARN_AGE never explicitly set for that account) numifies to 0, not an
+    error.
     """
     return int(value) if value else 0
 
 
 def _evaluate_inactive_password_lock(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.1.5, identical INACTIVE<=45 threshold and
-    awk condition confirmed across all 6 real target documents): `awk -F:
-    '($2~/^\\$.+\\$/) {if($7 > 45 || $7 < 0)print ...}' /etc/shadow` must
-    return nothing -- every password-having user's shadow field 7
-    (INACTIVE) must be in [0, 45].
-    """
+    """Every password-having user's shadow field 7 (INACTIVE) must be in [0, 45]."""
     for fields in _passwd_fields(facts.shadow_text):
         if len(fields) < 7 or not _has_real_password(fields):
             continue
@@ -2298,10 +2072,9 @@ def _evaluate_inactive_password_lock(facts: SystemFacts) -> bool:
 # rather than a fixed set of paths/config files), backed by the 3 new
 # facts.py text blocks documented there.
 def _parse_world_writable(text: str) -> tuple[list[str], list[str]]:
-    """Parses facts.world_writable_text ("f:<mode>:<path>" or
-    "d:<mode>:<path>" lines, one per world-writable file/dir found) into
-    (world-writable files, world-writable directories missing the sticky
-    bit) -- matches the real audit's l_smask=01000 test: a world-writable
+    """Parses facts.world_writable_text ("f:<mode>:<path>" or "d:<mode>:<path>"
+    lines, one per world-writable file/dir found) into (world-writable files,
+    world-writable directories missing the sticky bit): a world-writable
     directory only counts as a failure if the sticky bit is NOT set.
     """
     files = []
@@ -2326,11 +2099,9 @@ def _parse_world_writable(text: str) -> tuple[list[str], list[str]]:
 
 
 def _evaluate_world_writable_secured(facts: SystemFacts) -> bool:
-    """Real audit (control "Ensure world writable files and directories are
-    secured", identical title and audit shape across all 6 real target
-    documents): find every world-writable (mode & 0002) file or directory
-    under every real mount point. PASS requires zero world-writable files,
-    and every world-writable directory must carry the sticky bit (01000).
+    """Finds every world-writable (mode & 0002) file or directory under every real
+    mount point. PASS requires zero world-writable files, and every
+    world-writable directory must carry the sticky bit (01000).
     """
     files, bad_dirs = _parse_world_writable(facts.world_writable_text)
     return not files and not bad_dirs
@@ -2349,11 +2120,10 @@ def _evidence_world_writable_secured(facts: SystemFacts) -> str:
 
 
 def _parse_unowned(text: str) -> list[str]:
-    """Parses facts.unowned_text ("f:<uid>:<gid>:<path>" or
-    "d:<uid>:<gid>:<path>" lines) into a flat path list -- the real audit
-    tracks unowned and ungrouped separately, but both are the same PASS/
-    FAIL condition here (zero of either), so a single combined list is
-    enough to evaluate; evidence still reports the raw path either way.
+    """Parses facts.unowned_text ("f:<uid>:<gid>:<path>" or "d:<uid>:<gid>:<path>"
+    lines) into a flat path list. Unowned and ungrouped files are the same
+    PASS/FAIL condition here (zero of either), so a single combined list is
+    enough; evidence still reports the raw path either way.
     """
     paths = []
     for line in text.splitlines():
@@ -2368,11 +2138,8 @@ def _parse_unowned(text: str) -> list[str]:
 
 
 def _evaluate_no_unowned_files(facts: SystemFacts) -> bool:
-    """Real audit (control "Ensure no files or directories without an
-    owner and a group exist", identical title and audit shape across all
-    6 real target documents): find every file/dir under every real mount
-    point with no resolvable owning user or group. PASS requires zero
-    results.
+    """Every file/dir under every real mount point must have a resolvable owning
+    user and group. PASS requires zero results.
     """
     return len(_parse_unowned(facts.unowned_text)) == 0
 
@@ -2407,15 +2174,13 @@ def _root_path_entries(facts: SystemFacts) -> tuple[str, list[tuple[str, dict[st
     return raw_path, entries
 
 
-_ROOT_PATH_PMASK = 0o022  # real audit's l_pmask: reject group/other write
+_ROOT_PATH_PMASK = 0o022  # reject group/other write
 
 
 def _evaluate_root_path_integrity(facts: SystemFacts) -> bool:
-    """Real audit (control "Ensure root path integrity", identical title
-    and audit shape across all 6 real target documents): root's PATH must
-    have no empty ("::") component, no trailing ":", no "." (current
-    working directory) component, and every remaining component must be
-    an absolute, existing directory owned by root with mode 0755 or
+    """Root's PATH must have no empty ("::") component, no trailing ":", no "."
+    (current working directory) component, and every remaining component must
+    be an absolute, existing directory owned by root with mode 0755 or
     stricter (no group/other write bit). See facts.py's comment on
     root_path_probe_text for how root's PATH is captured without sudo/su.
     """
@@ -2457,14 +2222,9 @@ _EPOCH = date(1970, 1, 1)
 
 
 def _evaluate_last_password_change_in_past(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.1.6, identical script across all 6 real
-    target documents): for every password-having user, converts shadow
-    field 3 (days since epoch of last password change) back to a date via
-    `chage --list` and fails if that's later than `date +%s` (now) -- last
-    password change may never be in the future. An empty field 3 (`chage`
-    reports "never", filtered out of the real script's own comparison by
-    `grep -v 'never$'`) is treated as "not in the future" here (0 is never
-    later than today's epoch day).
+    """For every password-having user, shadow field 3 (days since epoch of last
+    password change) must not be in the future. An empty field 3 is treated as
+    "not in the future" (0 is never later than today's epoch day).
     """
     today = (datetime.now(timezone.utc).date() - _EPOCH).days
     for fields in _passwd_fields(facts.shadow_text):
@@ -2500,11 +2260,8 @@ def _evidence_last_password_change_in_past(facts: SystemFacts) -> str:
 
 
 def _evaluate_password_expiration_configured(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.1.1, identical PASS_MAX_DAYS<=365 threshold
-    and shadow field 5 (0, 365] range confirmed across all 6 real target
-    documents): `grep -Pi -- '^\\h*PASS_MAX_DAYS\\h+\\d+\\b'
-    /etc/login.defs` must show 365 or less, AND `awk -F: '($2~/^\\$.+\\$/)
-    {if($5 > 365 || $5 < 1)print ...}' /etc/shadow` must return nothing.
+    """PASS_MAX_DAYS in /etc/login.defs must be 365 or less, AND every
+    password-having user's shadow field 5 must be in the range 1-365.
     """
     value = parse_login_defs(facts.login_defs_text).get("PASS_MAX_DAYS")
     try:
@@ -2534,11 +2291,8 @@ def _evidence_password_expiration_configured(facts: SystemFacts) -> str:
 
 
 def _evaluate_password_expiration_warning_configured(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.1.3, identical PASS_WARN_AGE>=7 threshold
-    confirmed across all 6 real target documents): `grep -Pi --
-    '^\\h*PASS_WARN_AGE\\h+\\d+\\b' /etc/login.defs` must show 7 or more,
-    AND `awk -F: '($2~/^\\$.+\\$/) {if($6 < 7)print ...}' /etc/shadow` must
-    return nothing.
+    """PASS_WARN_AGE in /etc/login.defs must be 7 or more, AND every
+    password-having user's shadow field 6 must be 7 or more.
     """
     value = parse_login_defs(facts.login_defs_text).get("PASS_WARN_AGE")
     try:
@@ -2565,10 +2319,9 @@ def _evidence_password_expiration_warning_configured(facts: SystemFacts) -> str:
 
 
 def _valid_login_shells(facts: SystemFacts) -> set[str]:
-    """Real, working login shells listed in /etc/shells -- excludes any
-    nologin-style entry (basename "nologin"), matching the exact
-    `l_valid_shells` construction shared by controls 5.4.2.7 and 5.4.2.8
-    (`awk -F\\/ '$NF != "nologin" {print}' /etc/shells`).
+    """Working login shells listed in /etc/shells -- excludes any nologin-style
+    entry (basename "nologin"). Shared by the system-account shell check and
+    the locked-account check.
     """
     shells = set()
     for line in facts.shells_text.splitlines():
@@ -2616,13 +2369,11 @@ def _system_accounts_with_valid_shell(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_system_accounts_no_valid_shell(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.2.7, identical exclusion list -- root, halt,
-    sync, shutdown, nfsnobody -- and UID condition confirmed across all 6
-    real target documents): system accounts (UID < login.defs' UID_MIN, or
-    UID 65534) other than the excluded names must not have a shell from
-    /etc/shells' `l_valid_shells` set (see _valid_login_shells()). Fails
-    closed (can't be evaluated as compliant) if UID_MIN isn't set in
-    login.defs, since the audit condition depends on it entirely.
+    """System accounts (UID < login.defs' UID_MIN, or UID 65534) other than the
+    excluded names (root, halt, sync, shutdown, nfsnobody) must not have a shell
+    from /etc/shells' valid set (see _valid_login_shells()). Fails closed
+    (can't be evaluated as compliant) if UID_MIN isn't set in login.defs,
+    since the condition depends on it entirely.
     """
     if _uid_min(facts) is None:
         return False
@@ -2661,14 +2412,12 @@ def _accounts_without_valid_shell_not_locked(facts: SystemFacts) -> list[str]:
 
 
 def _evaluate_accounts_without_shell_locked(facts: SystemFacts) -> bool:
-    """Real audit (control 5.4.2.8, identical across all 6 real target
-    documents): every non-root account whose shell isn't in the
-    `l_valid_shells` set (see _valid_login_shells()) must be locked, per
-    `passwd -S` reporting `L`. `passwd -S`'s L/P/NP status reads straight
-    off /etc/shadow's own password field (a `!`/`!!`-prefixed hash =
-    locked) -- the same "read the underlying shadow state directly instead
-    of shelling out to passwd -S" substitution facts.py's own docstring
-    establishes for every check in this module; no live command runs here.
+    """Every non-root account whose shell isn't in the valid-shell set (see
+    _valid_login_shells()) must be locked. The lock state is read straight off
+    /etc/shadow's own password field (a `!`/`!!`-prefixed hash = locked)
+    instead of shelling out to `passwd -S`, the same substitution facts.py's
+    own docstring establishes for every check in this module; no live command
+    runs here.
     """
     return len(_accounts_without_valid_shell_not_locked(facts)) == 0
 
@@ -2681,13 +2430,10 @@ def _evidence_accounts_without_shell_locked(facts: SystemFacts) -> str:
 
 
 def _sudoers_defaults_tokens(line: str) -> list[str]:
-    """Splits a plain global `Defaults <comma-separated-options>` active
-    sudoers line into its individual option tokens (e.g.
-    "env_reset,mail_badpass,use_pty" -> ["env_reset", "mail_badpass",
-    "use_pty"]) -- only that global form is handled (not the
-    `Defaults:user`/`Defaults@host` scoped forms), matching the exact
-    remediation example every real target document's audit text shows
-    ("/etc/sudoers:Defaults use_pty").
+    """Splits a plain global `Defaults <comma-separated-options>` active sudoers
+    line into its individual option tokens (e.g. "env_reset,mail_badpass,use_pty"
+    -> ["env_reset", "mail_badpass", "use_pty"]) -- only that global form is
+    handled (not the `Defaults:user`/`Defaults@host` scoped forms).
     """
     parts = line.split("#", 1)[0].split(None, 1)
     if len(parts) < 2 or parts[0].lower() != "defaults":
@@ -2696,15 +2442,11 @@ def _sudoers_defaults_tokens(line: str) -> list[str]:
 
 
 def _evaluate_sudo_use_pty(facts: SystemFacts) -> bool:
-    """Real audit (control 5.2.2 -- debian_linux_11's regex is written
-    slightly more strictly, anchored to end-of-line, than the other 5
-    documents, but checks the same two things, confirmed via Postgres): a
-    `Defaults ... use_pty` line must be present in /etc/sudoers*, AND no
-    `Defaults ... !use_pty` (negated) line may be present.
-    facts.sudoers_text only covers /etc/sudoers itself, not
-    /etc/sudoers.d/* -- same scope limitation already accepted for
-    _evaluate_sudo_no_nopasswd/_evaluate_sudo_reauthentication_required
-    above (doesn't chase every override layer).
+    """A `Defaults ... use_pty` line must be present in /etc/sudoers, AND no
+    `Defaults ... !use_pty` (negated) line may be present. facts.sudoers_text
+    only covers /etc/sudoers itself, not /etc/sudoers.d/* -- same scope
+    limitation accepted for _evaluate_sudo_no_nopasswd and
+    _evaluate_sudo_reauthentication_required above.
     """
     has_positive = False
     has_negated = False
@@ -2730,11 +2472,10 @@ _PAM_PWQUALITY_DICTCHECK_RE = re.compile(r"\bdictcheck\s*=\s*0\b")
 
 
 def _evaluate_pwquality_dictcheck(facts: SystemFacts) -> bool:
-    """Real audit (control 5.3.3.2.6, identical across all 6 real target
-    documents): dictcheck must NOT be explicitly set to 0 (disabled),
-    either in pwquality.conf or as a pam_pwquality.so module argument on
-    common-password -- PASS if neither location disables it (dictcheck
-    defaults to enabled when left unset).
+    """dictcheck must NOT be explicitly set to 0 (disabled), either in
+    pwquality.conf or as a pam_pwquality.so module argument on common-password.
+    PASS if neither location disables it (dictcheck defaults to enabled when
+    left unset).
     """
     value = parse_pwquality_conf(facts.pwquality_text).get("dictcheck")
     if value is not None:
@@ -2757,16 +2498,13 @@ def _evidence_pwquality_dictcheck(facts: SystemFacts) -> str:
     return f"pwquality.conf: dictcheck {value}; common-password pam_pwquality.so line: {pam_line or '<none>'}"
 
 
-# Group R: kernel module availability. Real audit (confirmed via Postgres across
-# all 6 real target documents, sampled on "cramfs" and cross-checked on the rest):
-# PASS if the module's directory doesn't exist (and isn't non-empty) anywhere
-# under /lib/modules/**/kernel/<type>/<name> -- CIS's own audit explicitly treats
-# "not present on the system at all" as a passing state, no further checks
+# Group R: kernel module availability. PASS if the module's directory doesn't
+# exist (or is empty) anywhere under /lib/modules/**/kernel/<type>/<name> --
+# "not present on the system at all" is a passing state, no further checks
 # needed. If it IS present, PASS requires it to be both not currently loaded
-# (lsmod) AND blacklisted+install-false/true (modprobe --showconfig). module_type
-# (fs/net/drivers) is a real CIS-defined constant per module, confirmed
-# consistent across all 6 documents for each of these 12 modules -- it's not
-# detected, just hardcoded per module below.
+# (lsmod) AND blacklisted + install-false/true (modprobe --showconfig).
+# module_type (fs/net/drivers) is a fixed constant per module, hardcoded
+# below rather than detected.
 _KERNEL_MODULES = [
     ("cramfs", "fs"),
     ("dccp", "net"),
@@ -2802,11 +2540,9 @@ def _kernel_module_sections(text: str) -> tuple[str, str, str]:
 
 def _kernel_module_dir_populated(find_text: str, module_type: str, module_name: str) -> bool:
     """True if /lib/modules/**/kernel/<module_type>/<module_name> exists AND has
-    at least one file in it -- matches the real audit's own `[ -d ... ] && [ -n
-    "$(ls -A ...)" ]` pair, an empty directory is still "not available". Hyphens
-    in module_name (only usb-storage among these 12) map to nested path
-    components (drivers/usb/storage/), matching the real kernel module tree and
-    the audit script's own `${name//-/\\/}` substitution.
+    at least one file in it; an empty directory is still "not available".
+    Hyphens in module_name (only usb-storage among these 12) map to nested
+    path components (drivers/usb/storage/), matching the real kernel module tree.
     """
     subpath = f"kernel/{module_type}/{module_name.replace('-', '/')}/"
     return any(subpath in line for line in find_text.splitlines())
@@ -2814,18 +2550,17 @@ def _kernel_module_dir_populated(find_text: str, module_type: str, module_name: 
 
 def _kernel_module_loaded(lsmod_text: str, module_name: str) -> bool:
     """lsmod always reports module names with underscores, never hyphens (the
-    kernel itself normalizes '-' to '_') -- same normalization the real audit
-    applies before grepping lsmod output. Matches on the first (name) column
-    only, to avoid e.g. "sctp" matching an unrelated "sctp_diag" row.
+    kernel itself normalizes '-' to '_'), so the name is normalized before
+    matching. Matches on the first (name) column only, to avoid e.g. "sctp"
+    matching an unrelated "sctp_diag" row.
     """
     probe_name = module_name.replace("-", "_")
     return any(line.split()[:1] == [probe_name] for line in lsmod_text.splitlines())
 
 
 def _kernel_module_blacklisted_and_disabled(modprobe_text: str, module_name: str) -> bool:
-    """Matches the real audit's compliant example: modprobe --showconfig output
-    must include BOTH a `blacklist <module>` line AND an `install <module>
-    /bin/false` (or /bin/true) line.
+    """modprobe --showconfig output must include BOTH a `blacklist <module>` line
+    AND an `install <module> /bin/false` (or /bin/true) line.
     """
     probe_name = re.escape(module_name.replace("-", "_"))
     blacklisted = re.search(rf"^\s*blacklist\s+{probe_name}\b", modprobe_text, re.MULTILINE)
@@ -2863,26 +2598,19 @@ def _kernel_module_check(module_name: str, module_type: str) -> "Check":
     )
 
 
-# Group S: two candidates added deliberately after the umask control (see
-# comment above Group F's CHECKS entries) was flagged as needing a facts.py
-# field this group's original scope didn't have. A third candidate, "Ensure
-# default user shell timeout is configured" (TMOUT), was looked at and
-# dropped -- see the module docstring notes below the CHECKS list.
+# Group S: two candidates added after the umask check (see comment above
+# Group F's CHECKS entries) was found to need a facts.py field this group's
+# original scope didn't have. A shell-timeout (TMOUT) candidate was looked at
+# and not implemented -- see the module docstring notes below the CHECKS list.
 _PAM_WHEEL_RE = re.compile(r"^\s*auth\s+(?:required|requisite)\s+pam_wheel\.so\s+(.*)$", re.IGNORECASE)
 
 
 def _pam_su_restricted_group(facts: SystemFacts) -> str | None:
-    """Real audit (control "Ensure access to the su command is restricted",
-    identical audit text across all 6 real target documents, confirmed via
-    Postgres): `grep -Pi '^\\h*auth\\h+(?:required|requisite)\\h+pam_wheel
-    \\.so\\h+(?:[^#\\n\\r]+\\h+)?((?!\\2)(use_uid\\b|group=\\H+\\b))\\h+(?:
-    [^#\\n\\r]+\\h+)?((?!\\1)(use_uid\\b|group=\\H+\\b))(\\h+.*)?$'
-    /etc/pam.d/su` -- the negative-lookahead pattern's substance is "both
-    use_uid and group=<name> appear among the line's arguments, in either
-    order, without either being duplicated"; duplication itself isn't
-    modeled here (an edge case no real config hits), just "both tokens
-    present". Returns the group name from a qualifying line, or None if no
-    line in /etc/pam.d/su restricts su this way.
+    """Returns the group name from an /etc/pam.d/su `auth required|requisite
+    pam_wheel.so` line that has both `use_uid` and `group=<name>` among its
+    arguments, in either order, or None if no line restricts su this way.
+    Duplicated tokens on the same line are not modeled (an edge case no real
+    config hits), just "both tokens present".
     """
     for line in facts.pam_su_text.splitlines():
         match = _PAM_WHEEL_RE.match(line)
@@ -2913,19 +2641,12 @@ _ROOT_UMASK_LINE_RE = re.compile(r"^[ \t]*umask[ \t]+(\S+)", re.IGNORECASE | re.
 
 
 def _root_umask_weak_lines(facts: SystemFacts) -> list[str]:
-    """Lines in root's shell startup files (facts.root_shell_startup_text,
-    the concatenation of /root/.bash_profile, /root/.profile, and
-    /root/.bashrc -- see facts.py's comment on that field for why all three
-    are collected) that set a umask weaker than 0027, i.e. permissions less
-    restrictive than 750 (directories) / 640 (files). Real audit regex
-    differs cosmetically in form between documents (debian_linux_11 and
-    ubuntu_linux_20_04 use an older permission-bit-pattern regex;
-    debian_linux_12/13 and ubuntu_linux_22_04/24_04 use a newer
-    "^\\h*umask\\h+((\\d{1,2}(\\d[^7]|[^2-7]\\d)\\b)|...)" form) but both
-    encode the identical 0027 threshold, confirmed via Postgres audit text
-    on every document. Only numeric octal umask values are modeled here
-    (symbolic u=/g=/o= notation, which the real regex's second alternation
-    also covers, is not -- no demo target config uses it).
+    """Lines in root's shell startup files (facts.root_shell_startup_text, the
+    concatenation of /root/.bash_profile, /root/.profile, and /root/.bashrc --
+    see facts.py's comment on that field for why all three are collected) that
+    set a umask weaker than 0027, i.e. permissions less restrictive than 750
+    (directories) / 640 (files). Only numeric octal umask values are modeled
+    (symbolic u=/g=/o= notation is not).
     """
     offending = []
     for match in _ROOT_UMASK_LINE_RE.finditer(facts.root_shell_startup_text):
@@ -2953,33 +2674,17 @@ def _evidence_root_path_integrity(facts: SystemFacts) -> str:
     return f"root PATH: {raw_path or '<empty>'}"
 
 
-# Group: audit rule collection (round 4). Each control below checks for one
+# Group: audit rule collection (round 4). Each check below looks for one
 # specific auditd RULE (not a config file directive) via
 # facts.audit_rules_text (facts.py: `cat /etc/audit/rules.d/*.rules
-# /etc/audit/audit.rules`). CIS's audit documents show two syntaxes for the
-# *same* real control depending on document age: an old `-w <path> -p wa -k
-# <key>` watch-mode rule, or a newer `-a always,exit -F path=<path>`/`-F
-# dir=<path>` `-F perm=wa` syscall/path-mode rule -- debian_linux_13's own
-# audit text says outright "The deprecated -w format ... is in a 'passing'
-# state", i.e. both are CIS-confirmed-equivalent ways to write the identical
-# monitoring rule, not two different conditions. Every evaluate() below that
-# watches a path therefore accepts either form. Confirmed via Postgres
-# across all 6 real target documents (debian_linux_11/12/13, ubuntu_linux_
-# 20_04/22_04/24_04) that every title below resolves identically (no title-
-# wording drift, 6/6 rows for each) and that the underlying condition really
-# is the same single control in every document -- not a case of an old
-# document silently bundling two different real controls into one (the
-# ip-forwarding-style trap checks.md warns about).
+# /etc/audit/audit.rules`). A watched path may be written in two equivalent
+# syntaxes: an old `-w <path> -p wa -k <key>` watch rule, or a newer
+# `-a always,exit -F path=<path>`/`-F dir=<path>` `-F perm=wa` rule. Every
+# evaluate() below that watches a path therefore accepts either form.
 #
-# "Ensure use of privileged commands are collected" was investigated and
-# dropped: its real audit enumerates every SUID/SGID binary under any
-# nodev-mountable partition (`findmnt ... | find -perm /6000`) on the live
-# target and expects a per-path audit rule for each one found -- which
-# binaries exist (and their exact paths) is container-dependent, so there is
-# no deterministic "expected rule set" to derive the same way a real target
-# audit would; faithfully implementing it risks exactly the invented
-# pass/fail condition checks.md's "no invented failure conditions" rule
-# warns against, so it's dropped rather than approximated.
+# A check for privileged (SUID/SGID) commands was investigated and not
+# implemented: the set of binaries is target-dependent, so there is no
+# deterministic expected rule set to derive.
 
 
 def _line_matches_all(line: str, patterns: tuple[str, ...]) -> bool:
@@ -2987,24 +2692,21 @@ def _line_matches_all(line: str, patterns: tuple[str, ...]) -> bool:
 
 
 def _any_audit_line_matches(facts: SystemFacts, *patterns: str) -> bool:
-    """True if some single line of facts.audit_rules_text matches every
-    regex in `patterns` -- mirrors the real CIS audit awk/grep scripts,
-    which likewise test a whole set of substrings against one rule line
-    (order-independent), not a multi-line sequence.
+    """True if some single line of facts.audit_rules_text matches every regex in
+    `patterns` -- order-independent tests of a set of substrings against one
+    rule line, not a multi-line sequence.
     """
     return any(_line_matches_all(line, patterns) for line in facts.audit_rules_text.splitlines())
 
 
 def _path_write_monitored(facts: SystemFacts, path: str) -> bool:
-    """True if `path` has a write/attribute-change audit rule watching it,
-    in either the old `-w` or new `-F path=`/`-F dir=` form (see the group
-    comment above -- CIS examples: `-w /etc/apparmor.d/ -p wa -k
-    MAC-policy` vs `-a always,exit -F dir=/etc/apparmor.d -F perm=wa -k
-    MAC-policy`). The `(?=\\s|$)` lookahead after the path (rather than a
-    `\\b` boundary) stops "/etc/apparmor" from matching inside an
-    "/etc/apparmor.d" line -- a `\\b` boundary alone would still fire there
-    (word char 'r' -> non-word '.'), which would wrongly treat the two
-    distinct paths as the same rule.
+    """True if `path` has a write/attribute-change audit rule watching it, in
+    either the old `-w` or new `-F path=`/`-F dir=` form (see the group comment
+    above). The `(?=\\s|$)` lookahead after the path (rather than a `\\b`
+    boundary) stops "/etc/apparmor" from matching inside an "/etc/apparmor.d"
+    line -- a `\\b` boundary alone would still fire there (word char 'r' ->
+    non-word '.'), which would wrongly treat the two distinct paths as the same
+    rule.
     """
     escaped = re.escape(path.rstrip("/"))
     old = rf"-w\s+{escaped}/?(?=\s)"
@@ -3037,14 +2739,10 @@ _USER_EMULATION_PATTERNS = (
 
 
 def _evaluate_user_emulation_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure actions as another user are always
-    logged"): `auditctl -l | grep execve` and `grep -Ps -- execve
-    /etc/audit/rules.d/*.rules` must each show a rule shaped like `-a
-    always,exit -F arch=b64 -C euid!=uid -F auid!=unset -S execve -k
-    user_emulation` (both an arch=b32 and an arch=b64 variant are expected
-    on a real target; a single matching line already proves the rule type
-    is present).
+    """Audit rules must include an execve rule shaped like `-a always,exit -F
+    arch=b64 -C euid!=uid -F auid!=unset -S execve -k user_emulation` (both an
+    arch=b32 and an arch=b64 variant are expected on a real target; a single
+    matching line already proves the rule type is present).
     """
     return _any_audit_line_matches(facts, *_USER_EMULATION_PATTERNS)
 
@@ -3061,14 +2759,11 @@ _TIME_CHANGE_SYSCALL_PATTERNS = (
 
 
 def _evaluate_time_change_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure events that modify date and time
-    information are collected"): `auditctl -l | grep -Ps --
-    '(adjtimex|settimeofday|clock_settime)'` must show a syscall rule (`-a
-    always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change`, plus
-    a clock_settime rule) *and* a rule watching /etc/localtime for writes
-    (`-w /etc/localtime -p wa -k time-change`, or debian_linux_13's `-a
-    always,exit -F path=/etc/localtime -F perm=wa`).
+    """Audit rules must include a syscall rule for adjtimex/settimeofday
+    (`-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change`), a
+    clock_settime rule, *and* a rule watching /etc/localtime for writes (`-w
+    /etc/localtime -p wa -k time-change`, or the `-F path=/etc/localtime -F
+    perm=wa` form).
     """
     return _any_audit_line_matches(facts, *_TIME_CHANGE_SYSCALL_PATTERNS) and _path_write_monitored(
         facts, "/etc/localtime"
@@ -3090,10 +2785,7 @@ _SUDO_LOGFILE_VALUE_RE = re.compile(r"(?i)\blogfile\s*=\s*(\"[^\"]+\"|'[^']+'|\S
 def _sudo_log_file_path(facts: SystemFacts) -> str | None:
     """Resolves sudo's configured log path from an active `Defaults ...
     logfile=...` line in /etc/sudoers, the same source
-    _evaluate_sudo_log_file_exists already checks for -- reused here
-    because this control's own real audit derives its watched path from
-    that exact directive (`grep -r logfile /etc/sudoers* | sed -e
-    's/.*logfile=//;...'`).
+    _evaluate_sudo_log_file_exists already checks for.
     """
     for line in _sudoers_active_lines(facts.sudoers_text):
         if not _SUDO_LOGFILE_RE.match(line):
@@ -3108,17 +2800,11 @@ def _sudo_log_file_path(facts: SystemFacts) -> str | None:
 
 
 def _evaluate_sudo_log_file_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure events that modify the sudo log file are
-    collected" -- every document's own text notes this "requires that the
-    sudo logfile is configured", the known "Ensure sudo log file exists"
-    gap): resolves sudo's configured log path, then checks for a rule
-    watching it (`-w /var/log/sudo.log -p wa -k sudo_log_file`, or
-    debian_linux_13's `-a always,exit -F path=/var/log/sudo.log -F
-    perm=wa`). Fails closed if no `Defaults ... logfile=...` line is active
-    in sudoers -- same posture as _evaluate_sudo_log_file_exists, since
-    there is then no path to watch, and this container's default sudoers
-    never sets one.
+    """Resolves sudo's configured log path, then checks for a rule watching it
+    (`-w /var/log/sudo.log -p wa -k sudo_log_file`, or the `-F path=... -F
+    perm=wa` form). Fails closed if no `Defaults ... logfile=...` line is
+    active in sudoers -- same posture as _evaluate_sudo_log_file_exists, since
+    there is then no path to watch.
     """
     path = _sudo_log_file_path(facts)
     return bool(path) and _path_write_monitored(facts, path)
@@ -3136,13 +2822,9 @@ _MAC_POLICY_PATHS = ("/etc/apparmor", "/etc/apparmor.d")
 
 
 def _evaluate_mac_policy_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure events that modify the system's
-    Mandatory Access Controls are collected"): `auditctl -l | grep -Ps --
-    apparmor` must show both `-w /etc/apparmor/ -p wa -k MAC-policy` and
-    `-w /etc/apparmor.d/ -p wa -k MAC-policy` (or debian_linux_13's `-a
-    always,exit -F path=/etc/apparmor -F perm=wa` / `-F dir=/etc/apparmor.d
-    -F perm=wa`).
+    """Audit rules must watch both /etc/apparmor/ and /etc/apparmor.d/ for writes
+    (`-w /etc/apparmor/ -p wa -k MAC-policy`, `-w /etc/apparmor.d/ -p wa -k
+    MAC-policy`, or the `-F path=`/`-F dir=` forms).
     """
     return _all_paths_watched(facts, _MAC_POLICY_PATHS)
 
@@ -3154,11 +2836,9 @@ _LOGIN_PATHS = ("/var/log/lastlog", "/var/run/faillock")
 
 
 def _evaluate_logins_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure login and logout events are collected"):
-    `auditctl -l | grep -Ps -- '(lastlog|faillock)'` must show both `-w
-    /var/log/lastlog -p wa -k logins` and `-w /var/run/faillock -p wa -k
-    logins` (or debian_linux_13's `-F path=... -F perm=wa` equivalents).
+    """Audit rules must watch both /var/log/lastlog and /var/run/faillock for
+    writes (`-w /var/log/lastlog -p wa -k logins`, or the `-F path=... -F
+    perm=wa` equivalents).
     """
     return _all_paths_watched(facts, _LOGIN_PATHS)
 
@@ -3170,13 +2850,9 @@ _SESSION_PATHS = ("/var/run/utmp", "/var/log/wtmp", "/var/log/btmp")
 
 
 def _evaluate_session_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure session initiation information is
-    collected"): `auditctl -l | grep -Ps --
-    '(\\/var\\/run\\/utmp|\\/var\\/log\\/wtmp|\\/var\\/log\\/btmp)'` must
-    show `-w /var/run/utmp -p wa -k session`, `-w /var/log/wtmp -p wa -k
-    session`, and `-w /var/log/btmp -p wa -k session` (or debian_linux_13's
-    `-F path=... -F perm=wa` equivalents).
+    """Audit rules must watch /var/run/utmp, /var/log/wtmp and /var/log/btmp for
+    writes (`-w /var/run/utmp -p wa -k session`, etc., or the `-F path=... -F
+    perm=wa` equivalents).
     """
     return _all_paths_watched(facts, _SESSION_PATHS)
 
@@ -3185,13 +2861,10 @@ _evidence_session_logged = _evidence_paths_watched(_SESSION_PATHS)
 
 
 def _evaluate_mounts_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure successful file system mounts are
-    collected"): with `UID_MIN=$(awk '/^\\s*UID_MIN/{print $2}'
-    /etc/login.defs)`, `auditctl -l | grep -Ps -- '\\-S mount'` must show a
-    rule shaped like `-a always,exit -F arch=b64 -S mount -F
-    auid>=$UID_MIN -F auid!=unset -k mounts`. Fails closed if UID_MIN isn't
-    set in login.defs, since the audit condition depends on it entirely.
+    """With UID_MIN from login.defs, audit rules must include a mount syscall rule
+    shaped like `-a always,exit -F arch=b64 -S mount -F auid>=$UID_MIN -F
+    auid!=unset -k mounts`. Fails closed if UID_MIN isn't set in login.defs,
+    since the condition depends on it entirely.
     """
     uid_min = _uid_min(facts)
     if uid_min is None:
@@ -3229,14 +2902,11 @@ def _access_rule_present(facts: SystemFacts, uid_min: int, exit_code: str) -> bo
 
 
 def _evaluate_unsuccessful_access_logged(facts: SystemFacts) -> bool:
-    """Real audit (identical condition across all 6 real target documents,
-    e.g. debian_linux_12's "Ensure unsuccessful file access attempts are
-    collected"): with login.defs' UID_MIN, `auditctl -l | grep -Ps --
-    '(EACCES|EPERM)'` must show two separate rules -- one with `-F
-    exit=-EACCES`, one with `-F exit=-EPERM` -- each shaped like `-a
-    always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F
-    exit=-EACCES -F auid>=$UID_MIN -F auid!=unset -k access`. Fails closed
-    if UID_MIN isn't set in login.defs.
+    """With login.defs' UID_MIN, audit rules must include two separate rules --
+    one with `-F exit=-EACCES`, one with `-F exit=-EPERM` -- each shaped like
+    `-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F
+    exit=-EACCES -F auid>=$UID_MIN -F auid!=unset -k access`. Fails closed if
+    UID_MIN isn't set in login.defs.
     """
     uid_min = _uid_min(facts)
     if uid_min is None:
@@ -3254,39 +2924,21 @@ def _evidence_unsuccessful_access_logged(facts: SystemFacts) -> str:
         f"audit rules (auid>={uid_min}): EACCES rule {'found' if eacces_ok else 'NOT found'}; "
         f"EPERM rule {'found' if eperm_ok else 'NOT found'}"
     )
-# Group V: three more Grupo A/A2 candidates from docs/architecture/
-# checks-backlog.md, confirmed independently against Postgres (audit text
-# identical -- modulo PDF page-break/whitespace noise -- across all 6 real
-# target documents, no per-document branching needed).
+# Group V: three more candidates from docs/architecture/checks-backlog.md.
 #
-# "Ensure access to all logfiles has been configured" was looked at too and
-# dropped: debian_linux_11's real script has no special-case branch for
-# /var/log/apt/*.log or cloud-init.log*/localmessages*/waagent.log*
-# filenames, unlike all 5 other target documents (which relax those files
-# to perm_mask 0133, i.e. world-readable allowed) -- under debian_11 those
-# same files fall through to the stricter default branch (perm_mask 0137,
-# no world access at all). A stock /var/log/apt/*.log ships world-readable
-# (0644) after any apt operation, so the *same real file* would PASS under
-# 5 of the 6 documents' own scripts and FAIL under debian_linux_11's --
-# a genuine per-document condition drift, not cosmetic PDF-extraction
-# noise, the same category that killed the ip-forwarding candidate. Modeling
-# either behavior uniformly across all 6 would invent a result at least one
-# real document's own script doesn't produce, so it's dropped rather than
-# faked.
+# A log-file-permissions candidate was looked at and not implemented: the
+# supported documents disagree on which log files may be world-readable, so
+# no single evaluator would match all of them.
 
 
 def _evaluate_single_time_sync_daemon(facts: SystemFacts) -> bool:
-    """Real audit (identical logic across all 6 target documents): checks
-    `systemctl is-enabled`/`is-active` for chrony.service and
-    systemd-timesyncd.service and requires exactly one of the two enabled
-    *and* active -- both ("yy") or neither ("nn") FAILs. `systemctl` can't
-    report a real enabled/active state in an unprivileged container without
-    systemd as PID 1 (same structural limit as the Group C candidates in
-    checks-backlog.md, e.g. "Ensure chrony is enabled and running"), so this
-    maps the same "exactly one" condition onto package presence
+    """Exactly one of chrony.service and systemd-timesyncd.service must be enabled
+    and active -- both or neither FAILs. `systemctl` can't report a real
+    enabled/active state in an unprivileged container without systemd as PID 1,
+    so this maps the same "exactly one" condition onto package presence
     (facts.installed_packages) instead -- the same package-presence
-    substitution already used by the "package X is not in use" family
-    above, just requiring exactly one hit instead of zero.
+    substitution used by the "package X is not in use" family above, just
+    requiring exactly one hit instead of zero.
     """
     chrony = "chrony" in facts.installed_packages
     timesyncd = "systemd-timesyncd" in facts.installed_packages
@@ -3303,14 +2955,10 @@ def _evidence_single_time_sync_daemon(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_processes_prior_to_auditd(facts: SystemFacts) -> bool:
-    """Real audit, identical across all 6 target documents: `find /boot
-    -type f -name 'grub.cfg' -exec grep -Ph -- '^\\h*linux' {} + | grep -v
-    'audit=1'` should return nothing. A container has no
-    /boot/grub/grub.cfg at all (no bootloader) -- `find` matches zero
-    files and the whole pipe naturally produces no output, a legitimate
-    vacuous PASS, same precedent already used by the kernel-module checks
-    (grep against something that doesn't exist correctly reports "nothing
-    to flag").
+    """No `linux` line in any grub.cfg under /boot may lack `audit=1`. A container
+    has no /boot/grub/grub.cfg at all (no bootloader), so nothing matches and
+    the check is a legitimate vacuous PASS, same precedent as the kernel-module
+    checks.
     """
     return facts.boot_grub_audit_text.strip() == ""
 
@@ -3321,18 +2969,14 @@ def _evidence_audit_processes_prior_to_auditd(facts: SystemFacts) -> str:
 
 
 # checks-backlog.md Group B, both resolved: see the comment above
-# facts.timesyncd_text and facts.journal_remote_status_text for the real
-# audit text and why each is implementable without infra changes.
+# facts.timesyncd_text and facts.journal_remote_status_text for why each is
+# implementable without infra changes.
 
 
 def _evaluate_timesyncd_authorized_timeserver(facts: SystemFacts) -> bool:
-    """Real audit (control 2.3.2.1, identical logic across all 6 target
-    documents): both NTP= and FallbackNTP= must resolve, in the merged
-    timesyncd.conf, to a non-blank value -- the audit script itself doesn't
-    validate *which* server, just that one is actually configured (a NOTE
-    in the audit text defers "in accordance with local site policy" to a
-    human reviewer, same shape as other site-policy-lite checks already
-    implemented). Reuses parse_pwquality_conf() -- same "key = value,
+    """Both NTP= and FallbackNTP= must resolve, in the merged timesyncd.conf, to a
+    non-blank value -- the check doesn't validate *which* server, just that one
+    is actually configured. Reuses parse_pwquality_conf() -- same "key = value,
     comments/blank skipped, later line wins" ini format timesyncd.conf uses.
     """
     directives = parse_pwquality_conf(facts.timesyncd_text)
@@ -3347,13 +2991,10 @@ def _evidence_timesyncd_authorized_timeserver(facts: SystemFacts) -> str:
 
 
 def _evaluate_journal_remote_not_in_use(facts: SystemFacts) -> bool:
-    """Real audit (identical across all 6 target documents): `systemctl
-    is-enabled ...socket ...service | grep -P '^enabled'` then the same
-    with is-active/'^active' -- "nothing should be returned" from either is
-    the documented PASS condition. See the comment above
-    facts.journal_remote_status_text for why a systemd-less container's
-    `systemctl` failure legitimately satisfies that condition rather than
-    just approximating it.
+    """Neither the systemd-journal-remote socket nor service may be enabled or
+    active. See the comment above facts.journal_remote_status_text for why a
+    systemd-less container's `systemctl` failure legitimately satisfies that
+    condition rather than just approximating it.
     """
     return facts.journal_remote_status_text.strip() == ""
 
@@ -3363,17 +3004,12 @@ def _evidence_journal_remote_not_in_use(facts: SystemFacts) -> str:
     return f"systemctl is-enabled/is-active systemd-journal-remote: {text or '<nothing enabled or active>'}"
 
 
-# checks-backlog.md "Grupo C -- systemd real" (6 candidates, previously
-# blocked entirely -- no facts.py field, no Check existed for any of these
-# 6 titles). Real audit text confirmed via Postgres, identical across all 6
-# target documents (only page/footer noise and external_id differ), and
-# critically NOT the "5 more checks that need real systemd" uniform
-# assumption checks-backlog.md originally stated: 4 of the 6 are gated
-# "- IF - <daemon> is in use on the system" in CIS's own audit text, so a
-# target that never installed a given daemon passes that daemon's checks
-# vacuously (same substitution already used by
-# _evaluate_single_time_sync_daemon and _evaluate_journal_remote_not_in_use
-# above) rather than failing. Only 2 of the 6 are unconditional.
+# checks-backlog.md "Grupo C -- systemd real" (6 candidates). Four of the 6
+# are gated on the daemon being in use on the target, so a target that never
+# installed a given daemon passes that daemon's check vacuously (same
+# substitution already used by _evaluate_single_time_sync_daemon and
+# _evaluate_journal_remote_not_in_use above) rather than failing. Only 2 of
+# the 6 are unconditional.
 def _parse_systemd_service_status(text: str) -> dict[str, str]:
     """Parses facts.systemd_service_status_text's `--MARKER--`-delimited
     sections (same "one text field, self-parsed sub-markers" shape as
@@ -3397,11 +3033,10 @@ def _parse_systemd_service_status(text: str) -> dict[str, str]:
 
 
 def _evaluate_auditd_enabled_active(facts: SystemFacts) -> bool:
-    """Real audit (unconditional, identical across all 6 target documents):
-    `systemctl is-enabled auditd` and `systemctl is-active auditd` must
-    both report enabled/active. No "- IF - installed" gate in the real
-    audit text -- a target that never installed auditd fails this closed,
-    same posture as every other auditd-absent check in this module.
+    """Unconditional: `systemctl is-enabled auditd` and `systemctl is-active
+    auditd` must both report enabled/active. A target that never installed
+    auditd fails this closed, same posture as every other auditd-absent check
+    in this module.
     """
     status = _parse_systemd_service_status(facts.systemd_service_status_text)
     return status.get("auditd_enabled") == "enabled" and status.get("auditd_active") == "active"
@@ -3413,10 +3048,9 @@ def _evidence_auditd_enabled_active(facts: SystemFacts) -> str:
 
 
 def _evaluate_chrony_enabled_active(facts: SystemFacts) -> bool:
-    """Real audit is gated "- IF - chrony is in use on the system" --
-    a target that never installed chrony (e.g. one using systemd-timesyncd
-    instead, per _evaluate_single_time_sync_daemon's "exactly one" rule)
-    has nothing to check, a legitimate vacuous PASS.
+    """Gated on chrony being in use: a target that never installed chrony (e.g.
+    one using systemd-timesyncd instead, per _evaluate_single_time_sync_daemon's
+    "exactly one" rule) has nothing to check, a legitimate vacuous PASS.
     """
     if "chrony" not in facts.installed_packages:
         return True
@@ -3432,11 +3066,10 @@ def _evidence_chrony_enabled_active(facts: SystemFacts) -> str:
 
 
 def _evaluate_chrony_runs_as_chrony_user(facts: SystemFacts) -> bool:
-    """Real audit is a live `ps -ef | awk '(/[c]hronyd/ && $1!="_chrony")
-    {print $1}'` -- nothing should be returned. Unconditional on package
-    presence (unlike the check above): no chronyd process running at all
-    naturally produces no output either way, same vacuous-pass-by-absence
-    precedent as boot_grub_audit_text.
+    """No chronyd process may run as a user other than `_chrony`. Unconditional on
+    package presence (unlike the check above): no chronyd process running at all
+    naturally produces nothing to flag, same vacuous-pass-by-absence precedent
+    as boot_grub_audit_text.
     """
     return facts.chrony_process_user_text.strip() == ""
 
@@ -3447,8 +3080,8 @@ def _evidence_chrony_runs_as_chrony_user(facts: SystemFacts) -> str:
 
 
 def _evaluate_cron_enabled_active(facts: SystemFacts) -> bool:
-    """Real audit is gated "- IF - cron is installed" -- same substitution
-    as the chrony check above, keyed on the "cron" package.
+    """Gated on cron being installed -- same substitution as the chrony check
+    above, keyed on the "cron" package.
     """
     if "cron" not in facts.installed_packages:
         return True
@@ -3464,11 +3097,10 @@ def _evidence_cron_enabled_active(facts: SystemFacts) -> str:
 
 
 def _evaluate_timesyncd_enabled_active(facts: SystemFacts) -> bool:
-    """Real audit is gated "- IF - systemd-timesyncd is in use" -- same
-    substitution as the chrony/cron checks above, keyed on the
-    "systemd-timesyncd" package (mutually exclusive with chrony per
-    _evaluate_single_time_sync_daemon, so on any target that chose chrony
-    this is a legitimate vacuous PASS, not a gap).
+    """Gated on systemd-timesyncd being in use -- same substitution as the
+    chrony/cron checks above, keyed on the "systemd-timesyncd" package (mutually
+    exclusive with chrony per _evaluate_single_time_sync_daemon, so on any target
+    that chose chrony this is a legitimate vacuous PASS, not a gap).
     """
     if "systemd-timesyncd" not in facts.installed_packages:
         return True
@@ -3484,12 +3116,10 @@ def _evidence_timesyncd_enabled_active(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_rules_running_matches_disk(facts: SystemFacts) -> bool:
-    """Real audit (unconditional, identical across all 6 target documents):
-    `augenrules --check` must print exactly "No change". A target without
-    augenrules installed (auditd absent) gets a shell error here instead --
-    fails closed, same posture as every other auditd-absent check in this
-    module (a missing auditd.conf/log directory is an explicit FAIL branch
-    in the real script, never a vacuous pass).
+    """Unconditional: `augenrules --check` must print exactly "No change". A
+    target without augenrules installed (auditd absent) gets a shell error here
+    instead -- fails closed, same posture as every other auditd-absent check in
+    this module.
     """
     return "no change" in facts.audit_rules_sync_text.strip().lower()
 
@@ -3500,14 +3130,10 @@ def _evidence_audit_rules_running_matches_disk(facts: SystemFacts) -> str:
 
 
 # checks-backlog.md Group C's partition family: 19 "<option> set on <mount>"
-# checks + 5 "separate partition exists for <mount>" checks (the group's
-# original "24 candidates" count) plus 2 more discovered during
-# implementation -- "/tmp is a separate partition" and "/dev/shm is a
-# separate partition" (both with an "... is tmpfs or a separate partition"
-# wording variant on the 4 newer target documents) weren't in that original
-# count because a naive single-title lookup doesn't resolve across all 6
-# documents; both variants together do (same "title drift" shape already
-# established for e.g. /etc/shadow permissions).
+# checks + 5 "separate partition exists for <mount>" checks, plus 2 more
+# discovered during implementation (/tmp and /dev/shm), whose titles are
+# worded differently on newer documents; both wordings are listed on the same
+# Check.
 def parse_mounts(text: str) -> dict[str, str]:
     """Parses facts.mounts_text (`findmnt -kn <target> -o TARGET,SOURCE,
     FSTYPE,OPTIONS`, one line per candidate mount that's actually a real,
@@ -3526,13 +3152,10 @@ def parse_mounts(text: str) -> dict[str, str]:
 
 
 def _evaluate_mount_option(facts: SystemFacts, target: str, option: str) -> bool:
-    """Real audit (confirmed via Postgres, identical across all 6 target
-    documents): `findmnt -kn <target> | grep -v <option>` should return
-    nothing. CIS's own audit is explicitly conditional ("- IF - a separate
-    partition exists for <target>, verify that the <option> option is
-    set") -- a target that isn't a real, separate mount at all has nothing
-    to check, a legitimate vacuous PASS, same "grep against something that
-    might not be there" precedent used throughout this module.
+    """If <target> is a real, separate mount, its options must include <option>.
+    A target that isn't a separate mount at all has nothing to check, a
+    legitimate vacuous PASS, same "grep against something that might not be
+    there" precedent used throughout this module.
     """
     options = parse_mounts(facts.mounts_text).get(target)
     return options is None or option in options.split(",")
@@ -3554,11 +3177,10 @@ def _mount_option_check(title: str, target: str, option: str) -> "Check":
     )
 
 
-# 19 candidates: (title, mount target, required option). CIS never requires
-# noexec on /home or /var (users/services need to execute their own files
-# there) or nodev/nosuid/noexec together beyond what's listed -- this is
-# the real per-mount set confirmed via Postgres, not a uniform 3-per-mount
-# grid.
+# 19 candidates: (check title, mount target, required option). noexec is not
+# required on /home or /var (users/services need to execute their own files
+# there); the set below is the explicit per-mount list, not a uniform
+# 3-per-mount grid.
 _MOUNT_OPTION_CANDIDATES = [
     ("Ensure nodev option set on /dev/shm partition", "/dev/shm", "nodev"),
     ("Ensure nosuid option set on /dev/shm partition", "/dev/shm", "nosuid"),
@@ -3583,10 +3205,8 @@ _MOUNT_OPTION_CANDIDATES = [
 
 
 def _evaluate_separate_partition(facts: SystemFacts, target: str) -> bool:
-    """Real audit (confirmed via Postgres, identical across all 6 target
-    documents): `findmnt -kn <target>` must show output -- <target> has to
-    actually be its own mount, distinct from the root filesystem. Unlike
-    the option checks above, this one is unconditional.
+    """<target> has to actually be its own mount, distinct from the root
+    filesystem. Unlike the option checks above, this one is unconditional.
     """
     return target in parse_mounts(facts.mounts_text)
 
@@ -3606,10 +3226,9 @@ def _separate_partition_check(titles: list[str], target: str) -> "Check":
     )
 
 
-# 7 candidates: the 5 generically-titled "separate partition exists for
-# <mount>" (checks-backlog.md's original count) plus /tmp and /dev/shm,
-# whose titles read differently (see the module comment above) but check
-# the exact same thing.
+# 7 candidates: 5 generic "separate partition for <mount>" targets plus /tmp
+# and /dev/shm, whose titles read differently (see the module comment above)
+# but check the exact same thing.
 _SEPARATE_PARTITION_CANDIDATES = [
     (["Ensure /tmp is a separate partition", "Ensure /tmp is tmpfs or a separate partition"], "/tmp"),
     (["Ensure /dev/shm is a separate partition", "Ensure /dev/shm is tmpfs or a separate partition"], "/dev/shm"),
@@ -3621,24 +3240,21 @@ _SEPARATE_PARTITION_CANDIDATES = [
 ]
 
 
-# The real audit regex for the pam_pwquality.so half: `^\h*password\h+
-# [^#\n\r]+\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?enforcing=0\b` -- a plain
-# PAM "password ... pam_pwquality.so ... enforcing=0" line. re.search
-# rather than a full-line re.match, since only the offending token matters.
+# Matches a plain PAM "password ... pam_pwquality.so ... enforcing=0" line.
+# re.search rather than a full-line re.match, since only the offending token
+# matters.
 _PWQUALITY_ENFORCING_ZERO_RE = re.compile(
     r"^\s*password\s+\S+\s+pam_pwquality\.so\b.*\benforcing=0\b", re.IGNORECASE | re.MULTILINE
 )
 
 
 def _evaluate_pwquality_enforcing(facts: SystemFacts) -> bool:
-    """Real audit (identical across all 6 target documents) is two greps
-    that must both return nothing: `enforcing=0` must not be set in
-    /etc/security/pwquality.conf or /etc/security/pwquality.conf.d/*.conf
-    (`grep -PHsi -- '^\\h*enforcing\\h*=\\h*0\\b' ...`), and the
-    pam_pwquality.so line in /etc/pam.d/common-password must not carry
-    enforcing=0 as an argument either. The secure default is `enforcing`
-    left unset (or 1) in both places -- distinct from the already-
-    implemented "enforce_for_root" check, a different directive.
+    """`enforcing=0` must not be set in /etc/security/pwquality.conf or
+    /etc/security/pwquality.conf.d/*.conf, and the pam_pwquality.so line in
+    /etc/pam.d/common-password must not carry enforcing=0 as an argument
+    either. The secure default is `enforcing` left unset (or 1) in both
+    places -- distinct from the "enforce_for_root" check, a different
+    directive.
     """
     directives = parse_pwquality_conf(facts.pwquality_text)
     if directives.get("enforcing") == "0":
@@ -3653,14 +3269,12 @@ def _evidence_pwquality_enforcing(facts: SystemFacts) -> str:
     return f"pwquality.conf: enforcing={conf_value}; common-password pam_pwquality.so enforcing=0: {pam_hit}"
 
 
-# Group U: the auditd.conf family (checks-backlog.md's "Group A", 10
-# candidates confirmed via Postgres to share one real audit condition
-# across all 6 real target documents, cosmetic PDF page-number boilerplate
-# aside) -- auditd.conf directive checks, plus mode/owner checks over the
-# config files, the audit log directory + its files, and a fixed set of
-# audit tool binaries. All backed by the single facts.audit_conf_text field
-# (see facts.py's comment there, including the debian_linux_13-vs-the-
-# other-5 audit-tools-list discrepancy this group works around).
+# Group U: the auditd.conf family -- auditd.conf directive checks, plus
+# mode/owner checks over the config files, the audit log directory + its
+# files, and a fixed set of audit tool binaries. All backed by the single
+# facts.audit_conf_text field (see facts.py's comment there, including the
+# audit-tools list difference between target documents that this group works
+# around).
 _AUDIT_CONF_CONFFILES_MARKER = "---CONFFILES---"
 _AUDIT_CONF_LOGDIR_MARKER = "---LOGDIR---"
 _AUDIT_CONF_LOGFILES_MARKER = "---LOGFILES---"
@@ -3717,11 +3331,9 @@ def _parse_stat_lines(text: str) -> list[dict[str, str]]:
 
 
 def _mode_mask_ok(fields: dict[str, str], perm_mask: int) -> bool:
-    """True if none of perm_mask's bits are set in the entry's mode --
-    the exact `$(( l_mode & l_perm_mask )) -gt 0` test every real audit
-    script in this group uses (e.g. 0137 for "0640 or more restrictive",
-    0027 for "0750 or more restrictive", 0022 for "0755 or more
-    restrictive").
+    """True if none of perm_mask's bits are set in the entry's mode (e.g. 0137 for
+    "mode 640 or more restrictive", 0027 for "750 or more restrictive", 0022 for
+    "755 or more restrictive").
     """
     try:
         return (int(fields["mode"], 8) & perm_mask) == 0
@@ -3730,12 +3342,9 @@ def _mode_mask_ok(fields: dict[str, str], perm_mask: int) -> bool:
 
 
 def _evaluate_audit_conf_files_mode(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical script across all 6 real target
-    documents): `find /etc/audit/ -type f ( -name "*.conf" -o -name
-    "*.rules" ) ...`, every matching file's mode must have none of 0137 set
-    (group write/exec, other rwx) -- "0640 or more restrictive". No
-    /etc/audit/ at all (auditd not installed) is a vacuous PASS, same
-    posture as the real script's empty-loop PASS branch.
+    """Every file under /etc/audit/ named *.conf or *.rules must have a mode with
+    none of 0137 set (mode 640 or more restrictive). No /etc/audit/ at all
+    (auditd not installed) is a vacuous PASS.
     """
     _, conffiles_text, _, _, _ = _audit_conf_sections(facts.audit_conf_text)
     return all(_mode_mask_ok(f, 0o137) for f in _parse_stat_lines(conffiles_text))
@@ -3753,13 +3362,12 @@ def _evidence_audit_conf_files_mode(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_log_files_group_owner(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical text across all 6 real target
-    documents): `log_group` in auditd.conf must be adm or root (an unset
-    directive is auditd's own root-group default, a vacuous PASS, same
-    posture as every other unset-directive-at-its-secure-default check in
-    this module), AND every file in the audit log directory (dirname of
-    `log_file`) must be group-owned by root or adm. Same fail-closed-on-
-    missing-directory posture as the mode/owner checks below.
+    """`log_group` in auditd.conf must be adm or root (an unset directive is
+    auditd's own root-group default, a vacuous PASS, same posture as every
+    other unset-directive-at-its-secure-default check in this module), AND
+    every file in the audit log directory (dirname of `log_file`) must be
+    group-owned by root or adm. Same fail-closed-on-missing-directory posture
+    as the mode/owner checks below.
     """
     log_group = _audit_directives(facts).get("log_group")
     if log_group is not None and log_group.strip().lower() not in ("adm", "root"):
@@ -3783,12 +3391,10 @@ def _evidence_audit_log_files_group_owner(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_log_files_mode(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical script across all 6 real target
-    documents): every file in the audit log directory (dirname of
-    `log_file` in auditd.conf) must have mode with none of 0137 set ("0640
-    or more restrictive"). Unlike the config-files check above, a missing
-    auditd.conf or log directory is an explicit FAIL branch in the real
-    script, not a vacuous pass.
+    """Every file in the audit log directory (dirname of `log_file` in
+    auditd.conf) must have a mode with none of 0137 set (mode 640 or more
+    restrictive). Unlike the config-files check above, a missing auditd.conf
+    or log directory is an explicit FAIL, not a vacuous pass.
     """
     _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
     if not _parse_stat_lines(logdir_text):
@@ -3808,10 +3414,8 @@ def _evidence_audit_log_files_mode(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_log_files_owner(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical script across all 6 real target
-    documents): every file in the audit log directory must be owned by
-    root. Same fail-closed-on-missing-directory posture as the mode check
-    above.
+    """Every file in the audit log directory must be owned by root. Same
+    fail-closed-on-missing-directory posture as the mode check above.
     """
     _, _, logdir_text, logfiles_text, _ = _audit_conf_sections(facts.audit_conf_text)
     if not _parse_stat_lines(logdir_text):
@@ -3831,11 +3435,8 @@ def _evidence_audit_log_files_owner(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_log_storage_size(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical text across all 6 real target
-    documents): `grep -Po -- '^\\h*max_log_file\\h*=\\h*\\d+\\b'
-    /etc/audit/auditd.conf` -- any numeric value is acceptable
-    (site-policy-defined), the directive just has to be present and
-    numeric.
+    """`max_log_file` in auditd.conf must be present and numeric; any value is
+    acceptable (site-policy-defined).
     """
     value = _audit_directives(facts).get("max_log_file")
     return value is not None and value.strip().isdigit()
@@ -3847,10 +3448,7 @@ def _evidence_audit_log_storage_size(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_logs_not_auto_deleted(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical text across all 6 real target
-    documents): `grep max_log_file_action /etc/audit/auditd.conf` must be
-    `keep_logs`.
-    """
+    """`max_log_file_action` in auditd.conf must be `keep_logs`."""
     return _audit_directives(facts).get("max_log_file_action", "").strip().lower() == "keep_logs"
 
 
@@ -3860,11 +3458,10 @@ def _evidence_audit_logs_not_auto_deleted(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_tools_mode(facts: SystemFacts) -> bool:
-    """Matches the real audit (5 of 6 real target documents list 6 tools
-    including /sbin/autrace; debian_linux_13 lists 5, dropping autrace --
-    see facts.py's comment on audit_conf_text): every tool's mode must have
-    none of 0022 set ("0755 or more restrictive"), checked uniformly over
-    all 6 tools facts.py collects.
+    """Every audit tool's mode must have none of 0022 set (mode 755 or more
+    restrictive), checked uniformly over all 6 tools facts.py collects (one
+    supported document lists only 5, without /sbin/autrace -- see facts.py's
+    comment on audit_conf_text).
     """
     _, _, _, _, tools_text = _audit_conf_sections(facts.audit_conf_text)
     entries = _parse_stat_lines(tools_text)
@@ -3887,9 +3484,8 @@ _DISK_ERROR_ACTIONS = ("syslog", "single", "halt")
 
 
 def _evaluate_audit_disabled_when_full(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical text across all 6 real target
-    documents): `disk_full_action` must be halt or single, AND
-    `disk_error_action` must be syslog, single, or halt.
+    """`disk_full_action` must be halt or single, AND `disk_error_action` must be
+    syslog, single, or halt.
     """
     directives = _audit_directives(facts)
     return (
@@ -3910,9 +3506,8 @@ _ADMIN_SPACE_LEFT_ACTIONS = ("single", "halt")
 
 
 def _evaluate_audit_warns_low_space(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical text across all 6 real target
-    documents): `space_left_action` must be email, exec, single, or halt,
-    AND `admin_space_left_action` must be single or halt.
+    """`space_left_action` must be email, exec, single, or halt, AND
+    `admin_space_left_action` must be single or halt.
     """
     directives = _audit_directives(facts)
     return (
@@ -3929,11 +3524,9 @@ def _evidence_audit_warns_low_space(facts: SystemFacts) -> str:
 
 
 def _evaluate_audit_log_dir_mode(facts: SystemFacts) -> bool:
-    """Matches the real audit (identical script across all 6 real target
-    documents): the audit log directory (dirname of `log_file` in
-    auditd.conf) must have mode with none of 0027 set ("0750 or more
-    restrictive"). A missing auditd.conf or log directory is an explicit
-    FAIL branch in the real script, not a vacuous pass.
+    """The audit log directory (dirname of `log_file` in auditd.conf) must have a
+    mode with none of 0027 set (mode 750 or more restrictive). A missing
+    auditd.conf or log directory is an explicit FAIL, not a vacuous pass.
     """
     _, _, logdir_text, _, _ = _audit_conf_sections(facts.audit_conf_text)
     entries = _parse_stat_lines(logdir_text)
@@ -3951,13 +3544,9 @@ def _evidence_audit_log_dir_mode(facts: SystemFacts) -> str:
 
 @dataclass
 class Check:
-    """One implemented, hand-written evaluator, plus every title wording
-    it's known to appear under -- exact title text drifts a little between
-    CIS documents (confirmed: "Ensure permissions on /etc/shadow are
-    configured" vs "Ensure access to /etc/shadow is configured" for the
-    same underlying check), so the control is looked up by title, not a
-    hardcoded external_id (also confirmed to drift between documents --
-    Debian 13 uses 5.1.21 where the rest use 5.1.20).
+    """One implemented, hand-written evaluator, plus every title wording it's
+    known to appear under. The consumer (invariant_api) looks the control up
+    by title, not by external_id, because both can drift between documents.
 
     `family` groups checks by the OS family they were written against
     (systemd/shadow/shell tooling shape), so `run_assessment()` can filter
@@ -3973,7 +3562,7 @@ class Check:
     family: str = "debian_ubuntu"
 
 
-# The only controls Invariant actually knows how to check right now.
+# The only checks Invariant actually knows how to run right now.
 # Adding another means writing its evaluate()/evidence() by hand, the same
 # way these were -- extending facts.SystemFacts first if it needs a new
 # kind of collected data.
@@ -4006,14 +3595,11 @@ CHECKS = [
         evaluate=_evaluate_ssh_login_grace_time,
         evidence=_evidence_ssh_login_grace_time,
     ),
-    # Group A: plain file-permission checks. Title wording drifts the same
-    # way it does for /etc/shadow -- confirmed across debian_linux_11/12/13
-    # and ubuntu_linux_20_04/22_04/24_04 (our 6 demo targets' documents):
-    # debian_linux_11 always uses "Ensure permissions on X are configured",
-    # every other target document uses "Ensure access to X is configured".
-    # Both wordings are the same control (identical audit text), so both
-    # are listed. hosts.allow/hosts.deny permission controls were looked at
-    # and dropped -- see module docstring notes below the CHECKS list.
+    # Group A: plain file-permission checks. Some documents word the same
+    # check differently ("permissions on X" vs "access to X"); both wordings are
+    # listed in `titles`. Permission checks for hosts.allow/hosts.deny were
+    # looked at and not implemented -- see module docstring notes below the
+    # CHECKS list.
     Check(
         titles=[
             "Ensure access to /etc/issue is configured",
@@ -4155,11 +3741,8 @@ CHECKS = [
         evidence=_evidence_pam_pwhistory_enabled,
     ),
     Check(
-        # "Ensure pam_unix does not include nullok" is the wording every
-        # real target document (debian_linux_11/12/13, ubuntu_linux_20_04/
-        # 22_04/24_04) actually uses; "Ensure pam modules do not include
-        # nullok" is the STIG documents' wording for the same underlying
-        # misconfiguration (nullok on a pam_unix.so line).
+        # Two title wordings are listed for the same underlying misconfiguration
+        # (nullok on a pam_unix.so line).
         titles=[
             "Ensure pam_unix does not include nullok",
             "Ensure pam modules do not include nullok",
@@ -4168,25 +3751,18 @@ CHECKS = [
         evidence=_evidence_pam_no_nullok,
     ),
     Check(
-        # Assigned candidate was "Ensure default user umask is 077 or more
-        # restrictive", but that exact control only exists in the STIG
-        # documents, which document_slug_for_os() never resolves to (see
-        # final summary). "Ensure default user umask is configured" is the
-        # real equivalent in every CIS document backing the actual demo
-        # targets, at a 027-or-more-restrictive threshold instead of 077.
+        # The strictest umask wording only exists in a document family that
+        # document_slug_for_os() never resolves to, so this check uses the wording
+        # present in every supported document, at a 027-or-more-restrictive
+        # threshold.
         titles=["Ensure default user umask is configured"],
         evaluate=_evaluate_default_umask,
         evidence=_evidence_default_umask,
     ),
-    # Group G: password quality/history, via pwquality.conf and
-    # pwhistory.conf. All 8 assigned candidates turned out to be distinct
-    # real controls with full 6-document title coverage -- none dropped.
-    # "Ensure minimum password length is configured" (debian_linux_11,
-    # ubuntu_linux_20_04/22_04) and "Ensure password length is configured"
-    # (debian_linux_12/13, ubuntu_linux_24_04) are the same control (identical
-    # minlen audit text, same external_id 5.3.3.2.2) under drifted wording,
-    # same pattern as the file-permission "access to X"/"permissions on X"
-    # drift Group A already documented.
+    # Group G: password quality/history, via pwquality.conf and pwhistory.conf.
+    # The minlen check is listed under two drifted title wordings, same pattern
+    # as the file-permission "access to X"/"permissions on X" drift Group A
+    # already documented.
     Check(
         titles=["Ensure password quality is enforced for the root user"],
         evaluate=_evaluate_pwquality_enforce_for_root,
@@ -4231,8 +3807,7 @@ CHECKS = [
         evidence=_evidence_pwhistory_enforce_for_root,
     ),
     # Group H: pam_faillock lockout policy, via faillock.conf +
-    # pam_faillock.so's own inline arguments on common-auth. All 3 confirmed
-    # identical grep patterns/thresholds across all 6 target documents.
+    # pam_faillock.so's own inline arguments on common-auth.
     Check(
         titles=["Ensure password unlock time is configured"],
         evaluate=_evaluate_password_unlock_time,
@@ -4362,24 +3937,14 @@ CHECKS = [
         evaluate=_evaluate_prelink_not_installed,
         evidence=_evidence_prelink_not_installed,
     ),
-    # Group I: auditd config/tooling file ownership + rules immutability.
-    # Title wording is identical across all 6 real documents for these five
-    # (confirmed via Postgres) -- no variant aliases needed, unlike the
-    # Group A /etc/shadow-style controls. Two candidates from this
-    # group's brief were looked at and dropped (a third, "Ensure audit log
-    # files group owner is configured", was dropped here for lacking an
-    # auditd.conf text block in facts.py -- Group U below adds that field
-    # and implements it):
-    #   - "Ensure the audit configuration is loaded regardless of errors"
-    #     (the `-c` flag equivalent of the immutable-flag check below):
-    #     confirmed via Postgres this title only exists in debian_linux_13,
-    #     not the other 5 documents backing our demo targets -- would raise
-    #     LookupError on every other target, per the title-must-resolve-in-
-    #     all-6 constraint.
-    #   - "Ensure SUID and SGID files are reviewed": confirmed via Postgres
-    #     this control's real audit is a script that *lists* SUID/SGID
-    #     files for a human to review, not a pass/fail condition -- same
-    #     "Manual" shape prior groups dropped elsewhere.
+    # Group I: auditd config/tooling file ownership + rules immutability. Title
+    # wording is identical across supported documents for these five, so no
+    # variant aliases are needed. Two further candidates were looked at and not
+    # implemented:
+    #   - an audit-configuration-loaded-regardless-of-errors check, which only
+    #     exists in one supported document;
+    #   - a SUID/SGID review check, which only lists files for a human to review
+    #     and has no pass/fail condition.
     Check(
         titles=["Ensure audit configuration files owner is configured"],
         evaluate=_evaluate_audit_config_files_owner,
@@ -4412,9 +3977,8 @@ CHECKS = [
         evidence=_evidence_sudo_log_file_exists,
     ),
     Check(
-        # "...for privilege escalation" (debian_linux_11, ubuntu_linux_20_04)
-        # vs "...for escalation" (debian_linux_12/13, ubuntu_linux_22_04/
-        # 24_04) -- same NOPASSWD-in-sudoers audit under both titles.
+        # Two title wordings ("for privilege escalation" / "for escalation") cover
+        # the same NOPASSWD-in-sudoers condition.
         titles=[
             "Ensure users must provide password for privilege escalation",
             "Ensure users must provide password for escalation",
@@ -4427,18 +3991,11 @@ CHECKS = [
         evaluate=_evaluate_sudo_reauthentication_required,
         evidence=_evidence_sudo_reauthentication_required,
     ),
-    # "Ensure sudo authentication timeout is configured[...]" (5.2.6) was
-    # looked at and dropped: debian_linux_11/12/13 and ubuntu_linux_22_04/
-    # 24_04 all primarily grep timestamp_timeout= out of /etc/sudoers* (a
-    # static text check we could do), but ubuntu_linux_20_04's audit text
-    # for the *same* control is written entirely around `sudo -V | grep
-    # "Authentication timestamp timeout:"` -- no /etc/sudoers* grep at all
-    # -- with no static fallback. facts.py deliberately never runs a
-    # config-independent live command like `sudo -V` (see module docstring
-    # and facts.py's own comments), so this control can't be resolved
-    # correctly for all 6 real target documents from the current
-    # SystemFacts snapshot. Dropped rather than guessing at ubuntu_20_04's
-    # runtime default.
+    # A sudo authentication timeout check was looked at and not implemented: one
+    # supported document describes it only via `sudo -V` output, with no static
+    # config fallback, and facts.py deliberately never runs config-independent
+    # live commands like `sudo -V`, so it can't be resolved correctly for every
+    # supported document.
     Check(
         titles=[
             "Ensure access to /etc/crontab is configured",
@@ -4480,12 +4037,8 @@ CHECKS = [
         evidence=_evidence_cron_monthly_permissions,
     ),
     Check(
-        # /etc/cron.d's external_id itself drifts (2.4.1.7 in
-        # debian_linux_11, which has no cron.yearly control; 2.4.1.8 in
-        # every other real target document, which inserts a cron.yearly
-        # control -- not implemented here, not one of this group's
-        # assigned paths -- at 2.4.1.7 first). Title-based lookup makes
-        # that irrelevant to the Check itself; see test_assess_target.py's
+        # /etc/cron.d's external_id drifts between documents; title-based lookup
+        # makes that irrelevant to the Check itself. See test_assess_target.py's
         # _SYSTEMIC_GAPS handling for where it does matter.
         titles=[
             "Ensure access to /etc/cron.d is configured",
@@ -4494,14 +4047,10 @@ CHECKS = [
         evaluate=_evaluate_cron_d_permissions,
         evidence=_evidence_cron_d_permissions,
     ),
-    # Group J: journald config + a few standalone file checks. rsyslog was
-    # dropped in its entirety (all 4 candidates) -- confirmed via Postgres
-    # that debian_linux_11's benchmark version has zero "rsyslog"-titled
-    # controls anywhere (it only covers journald for logging; rsyslog
-    # config/CA-cert/gtls-forwarding controls first appear starting with
-    # debian_linux_12), so none of the 4 rsyslog candidates can resolve
-    # across all 6 real target documents -- see the module docstring notes
-    # below CHECKS for the per-candidate detail.
+    # Group J: journald config + a few standalone file checks. rsyslog checks
+    # were not implemented: the oldest supported Debian document has no
+    # rsyslog-related controls at all, so none could resolve across every
+    # supported document -- see the module docstring notes below CHECKS.
     Check(
         titles=["Ensure journald Compress is configured"],
         evaluate=_evaluate_journald_compress,
@@ -4518,12 +4067,9 @@ CHECKS = [
         evidence=_evidence_journald_log_rotation,
     ),
     Check(
-        # "Ensure nologin is not listed in /etc/shells" is the clean title
-        # (debian_linux_12, ubuntu_linux_20_04, ubuntu_linux_24_04); the
-        # other 3 documents glue a PDF page-header onto the same control
-        # (confirmed via Postgres -- same audit text, same external_id
-        # 5.4.3.1, just a garbled title), so those exact garbled strings
-        # are listed as aliases rather than treated as separate controls.
+        # Besides the clean title, other documents carry the same check with a PDF
+        # page-header glued onto it; those garbled strings are listed as aliases
+        # rather than treated as separate checks.
         titles=[
             "Ensure nologin is not listed in /etc/shells",
             "Configure user default environment Page 690  5.4.3.1 Ensure nologin is not listed in /etc/shells",
@@ -4543,20 +4089,13 @@ CHECKS = [
         evaluate=_evaluate_bootloader_config_permissions,
         evidence=_evidence_bootloader_config_permissions,
     ),
-    # Group F: remaining sshd_config directives + PAM/login.defs checks.
-    # One assigned candidate was dropped -- title/semantics didn't hold up
-    # across all 6 real documents (the root umask candidate flagged here
-    # originally is now implemented in Group K below, once facts.py grew
-    # the root_shell_startup_text field this group's "zero new facts" scope
-    # didn't allow for):
-    #   - "Ensure root account access is controlled": resolves in 5 of 6
-    #     documents (missing from debian_linux_11) with audit text "root
-    #     password is either set (P) or locked (L)" via `passwd -S root`.
-    #     debian_linux_11's nearest control at the same position (5.4.2.4)
-    #     is "Ensure root password is set" instead -- a *stricter*, only
-    #     partially-overlapping condition (P only, L is not accepted) --
-    #     not a wording variant of the same control, so merging its title
-    #     in would silently loosen debian_linux_11's real pass condition.
+    # Group F: remaining sshd_config directives + PAM/login.defs checks. One
+    # candidate (root account access control) was not implemented: the oldest
+    # supported Debian document's nearest equivalent is a stricter, only
+    # partially overlapping condition, so merging the titles would silently
+    # loosen that document's pass condition. (The root umask candidate is
+    # implemented in Group K below, once facts.py grew the
+    # root_shell_startup_text field.)
     Check(
         titles=["Ensure sshd MACs are configured"],
         evaluate=_evaluate_ssh_macs,
@@ -4597,30 +4136,18 @@ CHECKS = [
         evaluate=_evaluate_pam_pwhistory_use_authtok,
         evidence=_evidence_pam_pwhistory_use_authtok,
     ),
-    # Group K: package presence (installed_packages must contain the
-    # package, the inverse of the "not installed" checks in the block
-    # above). Two assigned candidates were dropped: "Ensure rsyslog is
-    # installed" only has a control on debian_linux_12/13 and
-    # ubuntu_linux_20_04/22_04/24_04 (confirmed via Postgres) -- no
-    # rsyslog-titled control exists on debian_linux_11 at all, consistent
-    # with the Group J comment above ("debian_linux_11 ... only covers
-    # journald for logging"), and invariant-debian-baseline resolves to
-    # exactly that document, so assess_target() would raise LookupError
-    # against it. "Ensure rsyslog-gnutls is installed" is narrower still --
-    # only debian_linux_12, debian_linux_13, ubuntu_linux_24_04 -- missing
-    # debian_linux_11 *and* ubuntu_linux_20_04/22_04, all three real target
-    # documents. "Ensure ufw is installed" is the one candidate confirmed
-    # present, with matching unconditional dpkg-query audit text, on all 6
-    # real target documents (debian_linux_11/12/13,
-    # ubuntu_linux_20_04/22_04/24_04).
+    # Group K: package presence (installed_packages must contain the package,
+    # the inverse of the "not installed" checks in the block above). Candidates
+    # for rsyslog and rsyslog-gnutls were not implemented: they don't resolve on
+    # the oldest supported documents, consistent with the Group J note above.
+    # The ufw check resolves on every supported document.
     Check(
         titles=["Ensure ufw is installed"],
         evaluate=_evaluate_ufw_installed,
         evidence=_evidence_ufw_installed,
     ),
-    # Group L: sshd_config directives (round 2). All 7 titles confirmed
-    # (via Postgres, full audit text read per document) identical across
-    # all 6 real target documents -- no dropped candidates this round.
+    # Group L: sshd_config directives (round 2). Titles are identical across
+    # supported documents; no candidates dropped this round.
     Check(
         titles=["Ensure sshd MaxAuthTries is configured"],
         evaluate=_evaluate_ssh_max_auth_tries,
@@ -4647,18 +4174,15 @@ CHECKS = [
         evidence=_evidence_ssh_client_alive,
     ),
     Check(
-        # Partial check -- see _evaluate_ssh_banner's docstring: the
-        # banner-file-content half of the real audit (checked against
-        # /etc/os-release on debian_12/13, ubuntu_22_04/24_04) isn't
-        # verified, only that Banner points at an absolute path.
+        # Partial check -- see _evaluate_ssh_banner's docstring: the banner-file
+        # content isn't verified, only that Banner points at an absolute path.
         titles=["Ensure sshd Banner is configured"],
         evaluate=_evaluate_ssh_banner,
         evidence=_evidence_ssh_banner,
     ),
     Check(
-        # Directive-presence only -- the real audit itself asks a human to
-        # review the actual user/group list against site policy, same as
-        # this project's other "configured, not judged" checks.
+        # Directive-presence only -- the actual user/group list is site policy, same
+        # as this project's other "configured, not judged" checks.
         titles=["Ensure sshd access is configured"],
         evaluate=_evaluate_ssh_access,
         evidence=_evidence_ssh_access,
@@ -4796,10 +4320,8 @@ CHECKS = [
         evaluate=_evaluate_shadow_group_empty,
         evidence=_evidence_shadow_group_empty,
     ),
-    # Group P: shadow/login.defs/sudoers/pwquality (round 2). All 8
-    # assigned candidates turned out to be real controls with identical
-    # title text, threshold, and audit condition across all 6 real target
-    # documents (confirmed via Postgres) -- none dropped.
+    # Group P: shadow/login.defs/sudoers/pwquality (round 2). Titles, thresholds
+    # and conditions are identical across supported documents; none dropped.
     Check(
         titles=["Ensure inactive password lock is configured"],
         evaluate=_evaluate_inactive_password_lock,
@@ -4841,43 +4363,20 @@ CHECKS = [
         evidence=_evidence_pwquality_dictcheck,
     ),
     # Group R: kernel module availability (cramfs, dccp, freevxfs, hfs, hfsplus,
-    # jffs2, rds, sctp, squashfs, tipc, udf, usb-storage). Title wording and
-    # audit condition are both identical across all 6 real target documents for
-    # every one of these 12 (confirmed via Postgres) -- see the group's helper
-    # functions above CHECK for the shared evaluate/evidence logic.
+    # jffs2, rds, sctp, squashfs, tipc, udf, usb-storage). See the group's helper
+    # functions above CHECKS for the shared evaluate/evidence logic.
     #
-    # A 13th candidate from this group, "Ensure kernel module loading unloading
-    # and modification is collected" (an auditd-rule check, not a module-
-    # availability one), was looked at and dropped: its title resolves in all 6
-    # documents (external_id drifts, e.g. 6.4.3.19 in debian_linux_11 vs
-    # 6.2.3.31 in debian_linux_13, same as every other title-matched-but-id-
-    # drifted control here), but debian_13's actual audit text is a materially
-    # different, weaker condition than the other 5 documents: debian_11,
-    # debian_12, and all 3 ubuntu documents require BOTH an auditd rule
-    # monitoring the init_module/finit_module/delete_module (and, on 4 of those
-    # 5, also create_module/query_module) syscalls AND a second rule on
-    # /usr/bin/kmod; debian_13's audit drops the syscall-monitoring rule
-    # entirely and checks only for the /usr/bin/kmod rule. One evaluate() can't
-    # represent both without being wrong for someone: checking for both rules
-    # would fail debian_13 targets that satisfy debian_13's own (real, lighter)
-    # audit; checking only the kmod rule would silently accept debian_11/12/
-    # ubuntu_* targets missing a rule their own document explicitly requires.
+    # A kernel-module-loading audit-rule check was looked at and not
+    # implemented: one supported document requires a materially weaker condition
+    # than the others (kmod rule only vs kmod rule plus syscall rules), so one
+    # evaluate() can't represent both without being wrong for someone.
     *(_kernel_module_check(name, module_type) for name, module_type in _KERNEL_MODULES),
     # Group S: see the comment block above these two definitions
-    # (_pam_su_restricted_group / _root_umask_weak_lines) for the real
-    # audit text each matches. A third candidate, "Ensure default user
-    # shell timeout is configured" (TMOUT), was looked at and dropped --
-    # its real audit spans an unbounded glob (/etc/profile.d/*.sh) and
-    # requires per-file co-location of value+readonly+export (debian_12/13
-    # + ubuntu_22_04/24_04) or a same-file all-three-conditions check plus
-    # a separate any-file "worse value" override scan (debian_11/
-    # ubuntu_20_04) -- two genuinely different pass/fail algorithms, not
-    # just cosmetic regex drift like the umask control above. Faithfully
-    # reproducing either needs facts.py to track which file each line came
-    # from, not just a flat concatenated blob; approximating it without
-    # that risks exactly the false PASS/FAIL this module's "no invented
-    # failure conditions" rule (docs/architecture/checks.md) warns against,
-    # so it's dropped rather than faked.
+    # (_pam_su_restricted_group / _root_umask_weak_lines). A shell-timeout (TMOUT)
+    # candidate was looked at and not implemented: it spans an unbounded glob
+    # (/etc/profile.d/*.sh) and needs per-file co-location of value, readonly and
+    # export, which requires facts.py to track which file each line came from;
+    # approximating it would risk a false PASS/FAIL, so it is left out.
     Check(
         titles=["Ensure access to the su command is restricted"],
         evaluate=_evaluate_su_restricted,
@@ -4905,12 +4404,10 @@ CHECKS = [
         evaluate=_evaluate_root_path_integrity,
         evidence=_evidence_root_path_integrity,
     ),
-    # Group: audit rule collection (round 4) -- see the comment block above
-    # this group's evaluate()/evidence() functions for the shared old-vs-new
-    # rule-syntax rationale. "Ensure use of privileged commands are
-    # collected" was investigated and dropped (same comment block) -- its
-    # real audit needs a per-target SUID/SGID enumeration that can't be
-    # derived deterministically here.
+    # Group: audit rule collection (round 4) -- see the comment block above this
+    # group's evaluate()/evidence() functions for the shared old-vs-new rule-syntax
+    # rationale. A privileged-commands check was investigated and not implemented
+    # (it needs a per-target SUID/SGID enumeration).
     Check(
         titles=["Ensure actions as another user are always logged"],
         evaluate=_evaluate_user_emulation_logged,
@@ -4951,9 +4448,8 @@ CHECKS = [
         evaluate=_evaluate_unsuccessful_access_logged,
         evidence=_evidence_unsuccessful_access_logged,
     ),
-    # Group V: see the comment block above these checks' evaluate()/
-    # evidence() functions for the real audit text each matches, and why
-    # "Ensure access to all logfiles has been configured" was dropped.
+    # Group V: see the comment block above these checks' evaluate()/evidence()
+    # functions. A log-file-permissions candidate was not implemented.
     Check(
         titles=["Ensure a single time synchronization daemon is in use"],
         evaluate=_evaluate_single_time_sync_daemon,
@@ -4970,12 +4466,8 @@ CHECKS = [
         evidence=_evidence_pwquality_enforcing,
     ),
     # Local interactive user home directory / dot files checks (round 4).
-    # Title wording is identical across all 6 real documents for both
-    # (confirmed via Postgres, full untruncated audit script compared line
-    # by line -- same bash logic on every document, only page numbers and
-    # cosmetic array-bookkeeping style differ). "Local interactive user" is
-    # defined by the real script itself via /etc/shells shell membership,
-    # not a UID_MIN cutoff -- see _local_interactive_users()'s docstring.
+    # "Local interactive user" is defined via /etc/shells shell membership, not a
+    # UID_MIN cutoff -- see _local_interactive_users()'s docstring.
     Check(
         titles=["Ensure local interactive user home directories are configured"],
         evaluate=_evaluate_interactive_user_home_dirs,
@@ -4986,12 +4478,10 @@ CHECKS = [
         evaluate=_evaluate_interactive_user_dotfiles,
         evidence=_evidence_interactive_user_dotfiles,
     ),
-    # Group U: the auditd.conf family (checks-backlog.md's "Group A", see
-    # the comment above facts.audit_conf_text and this group's own helper
-    # functions for the real audit text and the debian_linux_13 audit-tools
-    # scope discrepancy). Title wording is identical across all 6 real
-    # target documents for all 10 (confirmed via Postgres) -- no variant
-    # aliases needed.
+    # Group U: the auditd.conf family (checks-backlog.md's "Group A", see the
+    # comment above facts.audit_conf_text and this group's own helper functions
+    # for the audit-tools scope difference). Titles are identical across
+    # supported documents for all 10; no variant aliases needed.
     Check(
         titles=["Ensure audit configuration files mode is configured"],
         evaluate=_evaluate_audit_conf_files_mode,
@@ -5043,8 +4533,7 @@ CHECKS = [
         evidence=_evidence_audit_log_dir_mode,
     ),
     # checks-backlog.md Group B -- see the comment above each evaluate()
-    # function for the real audit text and why both are implementable
-    # without infra changes.
+    # function for why both are implementable without infra changes.
     Check(
         titles=["Ensure systemd-timesyncd configured with authorized timeserver"],
         evaluate=_evaluate_timesyncd_authorized_timeserver,
@@ -5055,10 +4544,9 @@ CHECKS = [
         evaluate=_evaluate_journal_remote_not_in_use,
         evidence=_evidence_journal_remote_not_in_use,
     ),
-    # checks-backlog.md Group C's partition family -- see the module
-    # comment above _MOUNT_OPTION_CANDIDATES/_SEPARATE_PARTITION_CANDIDATES
-    # for the real audit text and how the 2 bonus /tmp+/dev/shm candidates
-    # were found.
+    # checks-backlog.md Group C's partition family -- see the module comment
+    # above _MOUNT_OPTION_CANDIDATES/_SEPARATE_PARTITION_CANDIDATES for how the 2
+    # bonus /tmp+/dev/shm candidates were found.
     *[
         _mount_option_check(title, target, option)
         for title, target, option in _MOUNT_OPTION_CANDIDATES
@@ -5068,8 +4556,8 @@ CHECKS = [
         for titles, target in _SEPARATE_PARTITION_CANDIDATES
     ],
     # checks-backlog.md "Grupo C -- systemd real" -- see the module comment
-    # above _parse_systemd_service_status for the real audit text and the
-    # conditional/unconditional split across these 6.
+    # above _parse_systemd_service_status for the conditional/unconditional split
+    # across these 6.
     Check(
         titles=["Ensure auditd service is enabled and active"],
         evaluate=_evaluate_auditd_enabled_active,
@@ -5104,12 +4592,12 @@ CHECKS = [
 
 
 def document_slug_for_os(os_id: str, version_id: str) -> str:
-    """Maps a detected OS id/version to the matching document_slug in
-    invariant_ingestion.source.KNOWN_CIS_DOCUMENTS, e.g. ("debian", "11")
-    -> "debian_linux_11", ("ubuntu", "20.04") -> "ubuntu_linux_20_04".
-    Pure string logic, no Postgres/network needed -- safe to keep here
-    even though the document slug it returns is only meaningful to
-    whoever (invariant_api) actually looks controls up by it.
+    """Maps a detected OS id/version to the matching document slug used by
+    invariant_ingestion, e.g. ("debian", "11") -> "debian_linux_11",
+    ("ubuntu", "20.04") -> "ubuntu_linux_20_04". Pure string logic, no
+    Postgres/network needed -- safe to keep here even though the slug it
+    returns is only meaningful to whoever (invariant_api) actually looks
+    controls up by it.
     """
     return f"{os_id}_linux_{version_id.replace('.', '_')}"
 
