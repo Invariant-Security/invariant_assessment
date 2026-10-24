@@ -37,6 +37,7 @@ ALLOW_TOKENS = {
     ("tests/fixtures/docker/ssh-target/Dockerfile", "127.0.0.1"),  # loopback comment
     ("tests/test_internal_auth.py", "127.0.0.1"),  # loopback test server
     ("tests/test_transport.py", "127.0.0.1"),  # loopback SSH fixture
+    ("tests/test_host_key_pin.py", "127.0.0.1"),  # loopback in-process SSH server
 }
 
 # facts.py holds the shell probes that actually run on the target; they are

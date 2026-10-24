@@ -14,6 +14,7 @@ only fixture service with a published host port, and why it's bound to
 
 import io
 import os
+import socket
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ from fastapi.testclient import TestClient
 from invariant_assessment.api import app
 from invariant_assessment.facts import collect_facts
 from invariant_assessment.transport import (
+    host_key_fingerprint,
     DockerExecTransport,
     SSHTransport,
     TransportAuthError,
@@ -41,6 +43,21 @@ _SSH_HOST = "127.0.0.1"
 _SSH_PORT = 22022
 _SSH_USER = "invariant-test"
 _SSH_PASSWORD = "invariant-test-password"
+
+
+def _ssh_target_pin() -> dict:
+    """Host key the fixture currently presents (read without authenticating)."""
+    with socket.create_connection((_SSH_HOST, _SSH_PORT), timeout=5) as sock:
+        t = paramiko.Transport(sock)
+        try:
+            t.start_client(timeout=5)
+            key = t.get_remote_server_key()
+            return {"host_key_type": key.get_name(), "host_key_fingerprint": host_key_fingerprint(key)}
+        finally:
+            t.close()
+
+
+_DUMMY_PIN = {"host_key_type": "ssh-ed25519", "host_key_fingerprint": "SHA256:" + "A" * 43}
 
 
 @dataclass
@@ -93,6 +110,7 @@ def test_ssh_transport_password_auth_matches_docker_exec_facts():
         username=_SSH_USER,
         auth_method="password",
         password=_SSH_PASSWORD,
+        **_ssh_target_pin(),
     )
 
     docker_facts = collect_facts(docker_transport)
@@ -180,6 +198,7 @@ def test_ssh_transport_wrong_password_raises_auth_error():
         username=_SSH_USER,
         auth_method="password",
         password="wrong",
+        **_ssh_target_pin(),
     )
     with pytest.raises(TransportAuthError):
         transport.run("echo hi")
@@ -193,6 +212,7 @@ def test_ssh_transport_unreachable_host_raises_unreachable_error():
         auth_method="password",
         password="x",
         timeout=2.0,
+        **_DUMMY_PIN,
     )
     with pytest.raises(TransportUnreachableError):
         transport.run("echo hi")
@@ -207,6 +227,7 @@ def test_run_assessment_remote_endpoint_end_to_end():
             "username": _SSH_USER,
             "auth_method": "password",
             "password": _SSH_PASSWORD,
+            **_ssh_target_pin(),
         },
     )
     assert resp.status_code == 200
@@ -225,6 +246,7 @@ def test_run_assessment_remote_bad_password_returns_401():
             "username": _SSH_USER,
             "auth_method": "password",
             "password": "wrong",
+            **_ssh_target_pin(),
         },
     )
     assert resp.status_code == 401
@@ -239,6 +261,7 @@ def test_run_assessment_remote_unreachable_returns_502():
             "username": "x",
             "auth_method": "password",
             "password": "x",
+            **_DUMMY_PIN,
         },
     )
     assert resp.status_code == 502
@@ -253,6 +276,7 @@ def test_check_remote_endpoint_end_to_end():
             "username": _SSH_USER,
             "auth_method": "password",
             "password": _SSH_PASSWORD,
+            **_ssh_target_pin(),
         },
     )
     assert resp.status_code == 200
@@ -271,6 +295,7 @@ def test_check_remote_bad_password_returns_401():
             "username": _SSH_USER,
             "auth_method": "password",
             "password": "wrong",
+            **_ssh_target_pin(),
         },
     )
     assert resp.status_code == 401
@@ -285,6 +310,7 @@ def test_check_remote_unreachable_returns_502():
             "username": "x",
             "auth_method": "password",
             "password": "x",
+            **_DUMMY_PIN,
         },
     )
     assert resp.status_code == 502
@@ -307,6 +333,7 @@ def test_credentials_never_appear_in_response_body():
             "username": _SSH_USER,
             "auth_method": "password",
             "password": _MARKER_PASSWORD,
+            **_ssh_target_pin(),
         },
     )
     assert _MARKER_PASSWORD not in resp.text
@@ -326,6 +353,7 @@ def test_credentials_never_appear_in_captured_logs(capsys):
             "username": _SSH_USER,
             "auth_method": "password",
             "password": _MARKER_PASSWORD,
+            **_ssh_target_pin(),
         },
     )
     captured = capsys.readouterr()

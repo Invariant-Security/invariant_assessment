@@ -5,8 +5,13 @@ contract: one round trip, capture combined stdout+stderr as text, same
 ~10s budget as the original docker-exec-only collect_facts().
 """
 
+import base64
+import hashlib
+import hmac
 from dataclasses import dataclass, field
 from typing import Protocol
+
+import paramiko
 
 
 class Transport(Protocol):
@@ -32,6 +37,18 @@ class TransportUnreachableError(TransportError):
 
 class TransportAuthError(TransportError):
     """Connection reached the target but authentication failed."""
+
+
+class HostKeyMismatch(TransportError):
+    """The server's host key is not the one pinned by the operator. Carries
+    only what the server presented (`None` when it offered no key of the
+    pinned type at all) -- never any credential.
+    """
+
+    def __init__(self, key_type: str | None, fingerprint: str | None) -> None:
+        super().__init__(f"host key mismatch (seen {key_type} {fingerprint})")
+        self.key_type = key_type
+        self.fingerprint = fingerprint
 
 
 class TransportTimeoutError(TransportError):
@@ -136,6 +153,47 @@ def _load_private_key(key_material: str):
     raise TransportAuthError(f"could not parse private key material as any known key type: {last_error}")
 
 
+def host_key_fingerprint(key: "paramiko.PKey") -> str:
+    """OpenSSH format: "SHA256:" + base64(sha256(public blob)) without padding."""
+    return "SHA256:" + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+
+
+# Every host key algorithm paramiko can negotiate (+ ssh-rsa, the key-type
+# name of an RSA key). A pinned connection disables all but the pinned
+# type's, so the server cannot dodge the pin by offering another type.
+# RSA host keys are signed as rsa-sha2-*; all three names stay enabled for
+# an rsa pin (current paramiko only offers the sha2 ones).
+_HOST_KEY_ALGS = (
+    "ssh-ed25519",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "rsa-sha2-512",
+    "rsa-sha2-256",
+    "ssh-rsa",
+)
+_RSA_ALGS = {"ssh-rsa", "rsa-sha2-512", "rsa-sha2-256"}
+
+
+class _HostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Runs inside SSHClient.connect() right after the key exchange and
+    BEFORE any authentication, so a rejected key means no password and no
+    private-key signature ever left this process.
+    """
+
+    def __init__(self, pinned_fingerprint: str | None) -> None:
+        self.pinned_fingerprint = pinned_fingerprint
+        self.observed: dict | None = None
+
+    def missing_host_key(self, client, hostname, key) -> None:
+        fp = host_key_fingerprint(key)
+        self.observed = {"type": key.get_name(), "fingerprint": fp}
+        if self.pinned_fingerprint is not None and not hmac.compare_digest(
+            fp.encode(), self.pinned_fingerprint.encode()
+        ):
+            raise HostKeyMismatch(key.get_name(), fp)
+
+
 @dataclass
 class SSHTransport:
     """Runs the script over a real SSH connection via paramiko. Ephemeral
@@ -159,8 +217,18 @@ class SSHTransport:
     key_material: str | None = field(default=None, repr=False)
     password: str | None = field(default=None, repr=False)
     timeout: float = 10.0
+    # Pin: both set = "pinned" (mismatch aborts before auth); both None =
+    # first use (TOFU, accepts whatever the server presents).
+    host_key_type: str | None = None
+    host_key_fingerprint: str | None = None
+    # Set by run() to {"type", "fingerprint"} of the key the server presented.
+    host_key_observed: dict | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        if (self.host_key_type is None) != (self.host_key_fingerprint is None):
+            raise ValueError("host_key_type and host_key_fingerprint go together")
+        if self.auth_method == "password" and self.host_key_fingerprint is None:
+            raise ValueError("auth_method='password' requires a pinned host key (never first use)")
         if self.auth_method not in ("key", "password"):
             raise ValueError(f"auth_method must be 'key' or 'password', got {self.auth_method!r}")
         if self.auth_method == "key" and not self.key_material:
@@ -169,10 +237,11 @@ class SSHTransport:
             raise ValueError("auth_method='password' requires password")
 
     def run(self, script: str) -> str:
-        import paramiko
-
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        policy = _HostKeyPolicy(self.host_key_fingerprint)
+        client.set_missing_host_key_policy(policy)
+        pinned = self.host_key_type is not None
+        self.host_key_observed = None
         try:
             connect_kwargs = dict(
                 hostname=self.host,
@@ -186,14 +255,26 @@ class SSHTransport:
                 connect_kwargs["pkey"] = _load_private_key(self.key_material)
             else:
                 connect_kwargs["password"] = self.password
+            if pinned:
+                allowed = _RSA_ALGS if self.host_key_type == "ssh-rsa" else {self.host_key_type}
+                connect_kwargs["disabled_algorithms"] = {"keys": [a for a in _HOST_KEY_ALGS if a not in allowed]}
             client.connect(**connect_kwargs)
+        except HostKeyMismatch:
+            client.close()
+            raise
         except paramiko.AuthenticationException as e:
+            client.close()
             raise TransportAuthError(
                 f"authentication failed for {self.username}@{self.host}:{self.port}"
             ) from e
         except (paramiko.SSHException, OSError, TimeoutError) as e:
+            client.close()
+            if pinned and "no acceptable host key" in str(e):
+                # server offers no key of the pinned type: same as a changed key
+                raise HostKeyMismatch(None, None) from e
             raise TransportUnreachableError(f"could not reach {self.host}:{self.port}: {e}") from e
 
+        self.host_key_observed = policy.observed
         try:
             stdin, stdout, stderr = client.exec_command(script, timeout=self.timeout)
             stdin.close()
