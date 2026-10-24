@@ -13,9 +13,9 @@ on:
 permissions:
   contents: read
 
-# Só PR cancela a rodada anterior; dev/main nunca.
+# Só PR cancela a rodada anterior; push em dev/main tem group por sha (nunca cancela).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
