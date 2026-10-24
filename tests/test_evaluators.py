@@ -1,8 +1,8 @@
 import pytest
 
 from invariant_assessment import (
-    _evaluate_audit_config_files_group_owner,
-    _evaluate_audit_config_files_owner,
+    _evaluate_audit_conf_files_group_owner,
+    _evaluate_audit_conf_files_owner,
     _evaluate_audit_config_immutable,
     _evaluate_audit_log_files_group_owner,
     _evaluate_audit_tools_group_owner,
@@ -14,7 +14,7 @@ from invariant_assessment import (
     _evaluate_cron_hourly_permissions,
     _evaluate_cron_monthly_permissions,
     _evaluate_cron_weekly_permissions,
-    _evaluate_crontab_permissions,
+    _evaluate_etc_crontab_permissions,
     _evaluate_default_umask,
     _evaluate_etc_group_minus_permissions,
     _evaluate_etc_group_permissions,
@@ -33,7 +33,7 @@ from invariant_assessment import (
     _evaluate_journald_storage,
     _evaluate_ldap_client_not_installed,
     _evaluate_nis_client_not_installed,
-    _evaluate_only_root_group_has_gid0,
+    _evaluate_root_only_gid0_group,
     _evaluate_pam_faillock_enabled,
     _evaluate_pam_no_nullok,
     _evaluate_pam_pwhistory_enabled,
@@ -58,7 +58,7 @@ from invariant_assessment import (
     _evaluate_rsh_client_not_installed,
     _evaluate_rsync_not_installed,
     _evaluate_shadow_password_fields_not_empty,
-    _evaluate_shadow_permissions,
+    _evaluate_etc_shadow_permissions,
     _evaluate_shells_no_nologin,
     _evaluate_ssh_ciphers,
     _evaluate_ssh_disable_forwarding,
@@ -74,8 +74,8 @@ from invariant_assessment import (
     _evaluate_ssh_private_host_key_permissions,
     _evaluate_ssh_public_host_key_permissions,
     _evaluate_ssh_use_pam,
-    _evaluate_sshd_config_permissions,
-    _evaluate_strong_password_hashing_algorithm,
+    _evaluate_etc_ssh_sshd_config_permissions,
+    _evaluate_login_defs_encrypt_method,
     _evaluate_su_restricted,
     _evaluate_sudo_log_file_exists,
     _evaluate_sudo_no_nopasswd,
@@ -227,26 +227,26 @@ def test_evidence_ssh_permit_root_login_carries_absent_sentinel():
 
 def test_shadow_evaluator_passes_on_640_root_shadow():
     stat = FileStat(mode=0o640, uid=0, gid=42, gname="shadow")
-    assert _evaluate_shadow_permissions(_facts(shadow_stat=stat)) is True
+    assert _evaluate_etc_shadow_permissions(_facts(shadow_stat=stat)) is True
 
 
 def test_shadow_evaluator_passes_on_more_restrictive_than_640():
     stat = FileStat(mode=0o600, uid=0, gid=0, gname="root")
-    assert _evaluate_shadow_permissions(_facts(shadow_stat=stat)) is True
+    assert _evaluate_etc_shadow_permissions(_facts(shadow_stat=stat)) is True
 
 
 def test_shadow_evaluator_fails_on_world_readable():
     stat = FileStat(mode=0o644, uid=0, gid=42, gname="shadow")
-    assert _evaluate_shadow_permissions(_facts(shadow_stat=stat)) is False
+    assert _evaluate_etc_shadow_permissions(_facts(shadow_stat=stat)) is False
 
 
 def test_shadow_evaluator_fails_when_not_owned_by_root():
     stat = FileStat(mode=0o640, uid=1000, gid=42, gname="shadow")
-    assert _evaluate_shadow_permissions(_facts(shadow_stat=stat)) is False
+    assert _evaluate_etc_shadow_permissions(_facts(shadow_stat=stat)) is False
 
 
 def test_shadow_evaluator_fails_when_stat_missing():
-    assert _evaluate_shadow_permissions(_facts()) is False
+    assert _evaluate_etc_shadow_permissions(_facts()) is False
 
 
 def test_permit_user_environment_evaluator_passes_when_disabled():
@@ -285,7 +285,7 @@ def test_login_grace_time_evaluator_fails_above_60():
 
 
 def test_login_grace_time_evaluator_fails_at_zero():
-    """0 means "no timeout" in OpenSSH -- outside the 1-60s range CIS wants."""
+    """0 means "no timeout" in OpenSSH -- outside the accepted 1-60s range."""
     facts = _facts(sshd_config={"logingracetime": "0"})
     assert _evaluate_ssh_login_grace_time(facts) is False
 
@@ -296,9 +296,9 @@ def test_login_grace_time_evaluator_fails_on_non_numeric_value():
 
 
 # --- Group A: plain file-permission checks -------------------------------
-# All share the same real audit pattern confirmed against live containers
-# (see _permissions_ok in invariant.assessment): stat mode <= a ceiling,
-# Uid 0/root, Gid 0/root (or, for the shadow-family files, root/shadow).
+# All share the same pattern (see _permissions_ok in invariant.assessment):
+# stat mode <= a ceiling, uid 0/root, gid 0/root (or, for the shadow-family
+# files, root/shadow).
 
 _MODE_644_CASES = [
     ("etc_issue", _evaluate_etc_issue_permissions, "/etc/issue"),
@@ -388,29 +388,29 @@ def test_640_shadow_group_evaluator_fails_when_stat_missing(name, evaluate, path
 
 def test_sshd_config_permissions_evaluator_passes_at_600_root_root():
     stat = FileStat(mode=0o600, uid=0, gid=0, gname="root")
-    assert _evaluate_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is True
+    assert _evaluate_etc_ssh_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is True
 
 
 def test_sshd_config_permissions_evaluator_fails_at_644():
     """Real gotcha found validating against a live container: openssh-server's
-    packaged default is mode 644, which fails CIS's 600-or-more-restrictive
+    packaged default is mode 644, which fails the 600-or-more-restrictive
     requirement -- confirmed against invariant-debian-baseline, whose Dockerfile
-    was only curated to pass the 2 controls implemented before this one.
+    was only curated to pass the 2 checks implemented before this one.
     """
     stat = FileStat(mode=0o644, uid=0, gid=0, gname="root")
-    assert _evaluate_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is False
+    assert _evaluate_etc_ssh_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is False
 
 
 def test_sshd_config_permissions_evaluator_fails_when_not_owned_by_root():
     stat = FileStat(mode=0o600, uid=1000, gid=0, gname="root")
-    assert _evaluate_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is False
+    assert _evaluate_etc_ssh_sshd_config_permissions(_facts(file_stats={"/etc/ssh/sshd_config": stat})) is False
 
 
 def test_sshd_config_permissions_evaluator_fails_when_stat_missing():
-    assert _evaluate_sshd_config_permissions(_facts()) is False
+    assert _evaluate_etc_ssh_sshd_config_permissions(_facts()) is False
 
 
-# --- Ensure /etc/shadow password fields are not empty ---
+# --- /etc/shadow password fields are not empty ---
 
 
 def test_shadow_password_fields_evaluator_passes_when_all_set():
@@ -431,7 +431,7 @@ def test_shadow_password_fields_evaluator_passes_on_empty_text():
     assert _evaluate_shadow_password_fields_not_empty(_facts()) is True
 
 
-# --- Ensure accounts in /etc/passwd use shadowed passwords ---
+# --- accounts in /etc/passwd use shadowed passwords ---
 
 
 def test_passwd_shadowed_evaluator_passes_when_all_x():
@@ -444,7 +444,7 @@ def test_passwd_shadowed_evaluator_fails_when_hash_inline():
     assert _evaluate_passwd_accounts_use_shadowed_passwords(facts) is False
 
 
-# --- Ensure root is the only GID 0 account (primary GID in /etc/passwd) ---
+# --- root is the only GID 0 account (primary GID in /etc/passwd) ---
 
 
 def test_root_only_gid0_account_evaluator_passes():
@@ -458,8 +458,8 @@ def test_root_only_gid0_account_evaluator_fails_when_another_account_has_gid0():
 
 
 def test_root_only_gid0_account_evaluator_excludes_known_system_accounts():
-    """CIS's own audit excludes sync/shutdown/halt/operator by name --
-    those legitimately carry primary GID 0 without being a finding.
+    """sync/shutdown/halt/operator are excluded by name -- those legitimately
+    carry primary GID 0 without being a finding.
     """
     facts = _facts(
         passwd_text=(
@@ -473,7 +473,7 @@ def test_root_only_gid0_account_evaluator_excludes_known_system_accounts():
     assert _evaluate_root_only_gid0_account(facts) is True
 
 
-# --- Ensure root is the only UID 0 account ---
+# --- root is the only UID 0 account ---
 
 
 def test_root_only_uid0_account_evaluator_passes():
@@ -486,17 +486,17 @@ def test_root_only_uid0_account_evaluator_fails_when_another_account_has_uid0():
     assert _evaluate_root_only_uid0_account(facts) is False
 
 
-# --- Ensure group root is the only GID 0 group ---
+# --- group root is the only GID 0 group ---
 
 
 def test_only_root_group_has_gid0_evaluator_passes():
     facts = _facts(group_text="root:x:0:\ndaemon:x:1:")
-    assert _evaluate_only_root_group_has_gid0(facts) is True
+    assert _evaluate_root_only_gid0_group(facts) is True
 
 
 def test_only_root_group_has_gid0_evaluator_fails_when_another_group_has_gid0():
     facts = _facts(group_text="root:x:0:\ndaemon:x:0:")
-    assert _evaluate_only_root_group_has_gid0(facts) is False
+    assert _evaluate_root_only_gid0_group(facts) is False
 
 
 def test_faillock_evaluator_passes_when_present_in_both_files():
@@ -777,8 +777,7 @@ def test_log_level_evaluator_passes_on_info():
 
 
 def test_log_level_evaluator_passes_on_verbose():
-    """The audit text for our two demo documents (debian_linux_11,
-    ubuntu_linux_20_04) explicitly accepts VERBOSE as well as INFO."""
+    """VERBOSE is accepted as well as INFO."""
     assert _evaluate_ssh_log_level(_facts(sshd_config={"loglevel": "VERBOSE"})) is True
 
 
@@ -832,8 +831,9 @@ def test_ciphers_evaluator_fails_with_arcfour():
 
 
 def test_ciphers_evaluator_fails_with_chacha20_poly1305():
-    """Flagged by the real CIS audit regex (CVE-2023-48795 / Terrapin) --
-    facts.py doesn't collect a patch level, so it's treated as weak."""
+    """Flagged as weak (CVE-2023-48795 / Terrapin) -- facts.py doesn't collect a
+    patch level, so it's treated as weak unconditionally.
+    """
     facts = _facts(sshd_config={"ciphers": "chacha20-poly1305@openssh.com"})
     assert _evaluate_ssh_ciphers(facts) is False
 
@@ -875,8 +875,7 @@ def test_private_host_key_permissions_fails_when_not_owned_by_root():
 
 
 def test_private_host_key_permissions_passes_when_no_keys_present():
-    """Matches the real CIS audit script's own "No openSSH private keys
-    found" -> PASS outcome -- nothing to secure isn't a misconfiguration."""
+    """No host keys present -> PASS -- nothing to secure isn't a misconfiguration."""
     assert _evaluate_ssh_private_host_key_permissions(_facts()) is True
 
 
@@ -969,8 +968,9 @@ def test_telnet_client_evaluator_fails_when_telnet_installed():
 
 
 def test_telnet_client_evaluator_fails_when_inetutils_telnet_installed():
-    """Newer CIS docs (Debian 12/13, Ubuntu 24.04) also forbid the
-    inetutils-telnet alternative, not just the "telnet" package name."""
+    """The inetutils-telnet alternative is also forbidden, not just the "telnet"
+    package name.
+    """
     facts = _facts(installed_packages={"inetutils-telnet"})
     assert _evaluate_telnet_client_not_installed(facts) is False
 
@@ -994,8 +994,7 @@ def test_ftp_client_evaluator_fails_when_ftp_installed():
 
 
 def test_ftp_client_evaluator_fails_when_tnftp_installed():
-    """Newer CIS docs (Debian 12/13, Ubuntu 22.04/24.04) also forbid the
-    tnftp alternative, not just the "ftp" package name."""
+    """The tnftp alternative is also forbidden, not just the "ftp" package name."""
     facts = _facts(installed_packages={"tnftp"})
     assert _evaluate_ftp_client_not_installed(facts) is False
 
@@ -1019,13 +1018,13 @@ def test_prelink_evaluator_fails_when_installed():
 
 
 # --- Group I: auditd config/tooling file ownership + rules immutability --
-# Real audit commands check a wider file set (see module notes in
-# invariant.assessment above _AUDIT_CONFIG_PATHS/_AUDIT_TOOL_PATHS); these
+# The checked file sets are wider than what facts.py stats (see module notes
+# in invariant.assessment above _AUDIT_CONFIG_PATHS/_AUDIT_TOOL_PATHS); these
 # evaluators check ownership over the subset facts.py actually stats.
 
 _AUDIT_CONFIG_OWNER_CASES = [
-    ("owner", _evaluate_audit_config_files_owner),
-    ("group_owner", _evaluate_audit_config_files_group_owner),
+    ("owner", _evaluate_audit_conf_files_owner),
+    ("group_owner", _evaluate_audit_conf_files_group_owner),
 ]
 
 
@@ -1110,8 +1109,9 @@ def test_audit_config_immutable_evaluator_fails_on_empty_rules():
 
 
 def test_audit_config_immutable_evaluator_ignores_similar_but_wrong_flag():
-    """-e 0/-e 1 are the "not enabled"/"enabled but changeable" states --
-    only -e 2 (locked) satisfies the control."""
+    """-e 0/-e 1 are the "not enabled"/"enabled but changeable" states -- only -e 2
+    (locked) passes.
+    """
     facts = _facts(audit_rules_text="-D\n-e 1\n")
     assert _evaluate_audit_config_immutable(facts) is False
 
@@ -1177,7 +1177,7 @@ def test_sudo_reauthentication_required_evaluator_ignores_commented_out_line():
 
 
 _CRON_0600_CASES = [
-    ("crontab", _evaluate_crontab_permissions, "/etc/crontab"),
+    ("crontab", _evaluate_etc_crontab_permissions, "/etc/crontab"),
 ]
 
 
@@ -1189,10 +1189,10 @@ def test_cron_0600_evaluator_passes_at_boundary(name, evaluate, path):
 
 @pytest.mark.parametrize("name,evaluate,path", _CRON_0600_CASES, ids=[c[0] for c in _CRON_0600_CASES])
 def test_cron_0600_evaluator_fails_on_packaged_default_644(name, evaluate, path):
-    """Real gotcha confirmed against a live debian:12/ubuntu:22.04
-    container with the `cron` package freshly installed: /etc/crontab
-    ships at mode 644, which fails this control's 600-or-more-restrictive
-    requirement."""
+    """Real gotcha confirmed against a live debian:12/ubuntu:22.04 container with
+    the `cron` package freshly installed: /etc/crontab ships at mode 644, which
+    fails the 600-or-more-restrictive requirement.
+    """
     stat = FileStat(mode=0o644, uid=0, gid=0, gname="root")
     assert evaluate(_facts(file_stats={path: stat})) is False
 
@@ -1229,10 +1229,10 @@ def test_cron_0700_dir_evaluator_passes_at_boundary(name, evaluate, path):
     "name,evaluate,path", _CRON_0700_DIR_CASES, ids=[c[0] for c in _CRON_0700_DIR_CASES]
 )
 def test_cron_0700_dir_evaluator_fails_on_packaged_default_755(name, evaluate, path):
-    """Real gotcha confirmed against a live debian:12/ubuntu:22.04
-    container with the `cron` package freshly installed: every cron.* dir
-    ships at mode 755, which fails this control's 700-or-more-restrictive
-    requirement."""
+    """Real gotcha confirmed against a live debian:12/ubuntu:22.04 container with
+    the `cron` package freshly installed: every cron.* dir ships at mode 755,
+    which fails the 700-or-more-restrictive requirement.
+    """
     stat = FileStat(mode=0o755, uid=0, gid=0, gname="root")
     assert evaluate(_facts(file_stats={path: stat})) is False
 
@@ -1338,9 +1338,9 @@ def test_motd_permissions_evaluator_fails_when_not_owned_by_root():
 
 
 def test_motd_permissions_evaluator_passes_when_file_absent():
-    """Real audit's own documented pass condition: "-- OR -- Nothing is
-    returned" when /etc/motd doesn't exist at all (confirmed empirically:
-    plain ubuntu:22.04 ships with no /etc/motd)."""
+    """A missing /etc/motd is a PASS (confirmed empirically: plain ubuntu:22.04
+    ships with no /etc/motd).
+    """
     assert _evaluate_etc_motd_permissions(_facts()) is True
 
 
@@ -1360,10 +1360,11 @@ def test_bootloader_config_permissions_evaluator_fails_when_not_owned_by_root():
 
 
 def test_bootloader_config_permissions_evaluator_fails_when_file_absent():
-    """Unlike /etc/motd, the real audit has no "file absent -> PASS" clause
-    for the bootloader config -- fails closed (confirmed empirically that
-    bare debian:12/ubuntu:22.04 containers have no /boot/grub/grub.cfg at
-    all, since no bootloader is installed in a container)."""
+    """Unlike /etc/motd, a missing bootloader config is not a PASS -- fails closed
+    (confirmed empirically that bare debian:12/ubuntu:22.04 containers have no
+    /boot/grub/grub.cfg at all, since no bootloader is installed in a
+    container).
+    """
     assert _evaluate_bootloader_config_permissions(_facts()) is False
 def test_macs_evaluator_passes_with_only_strong_macs():
     facts = _facts(sshd_config={"macs": "hmac-sha2-512-etm@openssh.com,hmac-sha2-256"})
@@ -1371,8 +1372,9 @@ def test_macs_evaluator_passes_with_only_strong_macs():
 
 
 def test_macs_evaluator_fails_with_umac_64():
-    """umac-64@openssh.com is part of OpenSSH's own stock default MACs
-    list, which is exactly what CIS's audit flags as weak."""
+    """umac-64@openssh.com is part of OpenSSH's own stock default MACs list, and is
+    treated as weak.
+    """
     facts = _facts(sshd_config={"macs": "hmac-sha2-512-etm@openssh.com,umac-64@openssh.com"})
     assert _evaluate_ssh_macs(facts) is False
 
@@ -1410,21 +1412,21 @@ def test_max_startups_evaluator_fails_on_malformed_value():
 
 def test_strong_password_hashing_algorithm_evaluator_passes_on_sha512():
     facts = _facts(login_defs_text="ENCRYPT_METHOD SHA512")
-    assert _evaluate_strong_password_hashing_algorithm(facts) is True
+    assert _evaluate_login_defs_encrypt_method(facts) is True
 
 
 def test_strong_password_hashing_algorithm_evaluator_passes_on_yescrypt():
     facts = _facts(login_defs_text="ENCRYPT_METHOD yescrypt")
-    assert _evaluate_strong_password_hashing_algorithm(facts) is True
+    assert _evaluate_login_defs_encrypt_method(facts) is True
 
 
 def test_strong_password_hashing_algorithm_evaluator_fails_on_md5():
     facts = _facts(login_defs_text="ENCRYPT_METHOD MD5")
-    assert _evaluate_strong_password_hashing_algorithm(facts) is False
+    assert _evaluate_login_defs_encrypt_method(facts) is False
 
 
 def test_strong_password_hashing_algorithm_evaluator_fails_when_missing():
-    assert _evaluate_strong_password_hashing_algorithm(_facts()) is False
+    assert _evaluate_login_defs_encrypt_method(_facts()) is False
 
 
 def test_pam_unix_enabled_evaluator_passes_when_present_in_all_three_files():
@@ -1482,9 +1484,9 @@ def test_pam_unix_strong_password_hashing_evaluator_fails_when_absent():
 
 
 def test_pam_unix_strong_password_hashing_evaluator_ubuntu_20_04_rejects_yescrypt():
-    """ubuntu_linux_20_04's real audit text only accepts sha512, not
-    yescrypt, unlike every other real target document -- confirmed via
-    Postgres."""
+    """On ubuntu 20.04 only sha512 is accepted, not yescrypt, unlike the other
+    supported targets.
+    """
     facts = _facts(
         pam_common_password="password [success=1 default=ignore] pam_unix.so obscure yescrypt",
         os_id="ubuntu",
@@ -1526,8 +1528,9 @@ def test_pam_pwhistory_use_authtok_evaluator_passes_via_common_password_line():
 
 
 def test_pam_pwhistory_use_authtok_evaluator_passes_via_pwhistory_conf():
-    """Newer, pam-configs-driven layout (debian_linux_13/ubuntu_linux_24_04):
-    use_authtok can instead be set directly in pwhistory.conf."""
+    """Newer, pam-configs-driven layout: use_authtok can instead be set directly
+    in pwhistory.conf.
+    """
     facts = _facts(
         pam_common_password="password requisite pam_pwhistory.so remember=24",
         pwhistory_text="use_authtok",
@@ -1545,10 +1548,10 @@ def test_pam_pwhistory_use_authtok_evaluator_fails_when_pwhistory_not_configured
 
 
 def test_su_restricted_evaluator_passes_with_nonempty_group():
-    """Regression: the real CIS audit only checks the pam_wheel.so line
-    exists -- it never inspects /etc/group membership, so a group with real
-    members (the normal, intended way to authorize specific admins to su)
-    must pass, not fail."""
+    """Regression: only the pam_wheel.so line is checked -- /etc/group membership
+    is never inspected, so a group with real members (the normal, intended way
+    to authorize specific admins to su) must pass, not fail.
+    """
     facts = _facts(
         pam_su_text="auth required pam_wheel.so use_uid group=wheel\n",
         group_text="wheel:x:10:alice,bob\n",

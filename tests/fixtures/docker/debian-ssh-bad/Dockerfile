@@ -1,5 +1,5 @@
-# Debian 12 -- SSH root login enabled on purpose (fails control 5.1.20,
-# "Ensure sshd PermitRootLogin is disabled"). /etc/shadow perms are correct.
+# Debian 12 -- SSH root login enabled on purpose (fails the
+# ssh_permit_root_login check). /etc/shadow perms are correct.
 FROM debian:12
 
 RUN apt-get update \

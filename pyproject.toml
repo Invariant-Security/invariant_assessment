@@ -1,8 +1,9 @@
 [project]
 name = "invariant_assessment"
 version = "0.1.0"
-description = "Evaluates a target's collected facts against every implemented CIS control. No Postgres access -- see invariant_api for where results become real Findings."
+description = "Evaluates a target's collected facts against every implemented check. No Postgres access -- see invariant_api for where results become real Findings."
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",

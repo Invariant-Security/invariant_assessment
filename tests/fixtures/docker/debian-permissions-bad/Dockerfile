@@ -1,5 +1,5 @@
-# Debian 13 -- /etc/shadow world-readable on purpose (fails control 7.1.5,
-# "Ensure access to /etc/shadow is configured"). sshd config is correct.
+# Debian 13 -- /etc/shadow world-readable on purpose (fails the
+# etc_shadow_permissions check). sshd config is correct.
 FROM debian:13
 
 RUN apt-get update \

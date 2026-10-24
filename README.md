@@ -1,9 +1,10 @@
 # invariant_assessment
 
-Evaluates a target's collected system facts (`docker exec`) against every
-implemented CIS control. No Postgres access -- returns raw check
-titles/status/evidence; `invariant_api` joins that against real CIS
-controls to build a `Finding`.
+Evaluates a target's collected system facts (`docker exec` or SSH) against
+every implemented hardening check (compatible with the CIS Benchmarks for
+Debian and Ubuntu). No Postgres access -- returns each check's own `check_id`
+with status/evidence; `invariant_api` maps the id to the matching control to
+build a `Finding`.
 
 Extracted from the `Invariant-Security/Invariant` monolith
 (`src/invariant/assessment/`) as part of its split into `invariant_*`
@@ -16,7 +17,7 @@ exposed over HTTP instead of called in-process) changed.
 - `GET /healthz`
 - `POST /assessment/run?target=<container-name>` -- one `docker exec`
   round trip, then every `CHECKS` entry evaluated against that snapshot.
-  Returns `{"document": "...", "results": [{"titles": [...], "status":
+  Returns `{"document": "...", "results": [{"check_id": "...", "status":
   "PASS"|"FAIL", "evidence": "..."}]}`.
 
 ## Development
@@ -33,3 +34,12 @@ uvicorn invariant_assessment.api:app --reload
 `requirements.lock` (hashed) is what the image and CI install; `pyproject.toml` keeps the loose ranges.
 Regenerate (add/bump a dep): in `python:3.12.14-slim@<digest>`, `pip install pip-tools && pip-compile --generate-hashes --strip-extras --allow-unsafe -o requirements.lock` with the deps from `pyproject.toml` as input.
 Bump the base: `docker buildx imagetools inspect python:3.12.14-slim` (or the new tag) → put the index `Digest:` in the Dockerfile `ARG BASE`, then rebuild and run `pip check`.
+
+## Contributing
+
+Contributions are welcome under the DCO, with no CLA. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[Apache License 2.0](LICENSE).
