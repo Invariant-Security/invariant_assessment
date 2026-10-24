@@ -18,12 +18,13 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(app, headers=AUTH_HEADERS)
 
-# The 68 check ids that fail identically on all 6 containers -- none of the
+# The 71 check ids that fail identically on all 6 containers -- none of the
 # demo/test Dockerfiles were ever hardened for these (missing packages:
 # auditd/AIDE/ufw/sudo/libpam-pwquality; no audit rules loaded; no
 # systemd/journald PID 1; no bootloader; no separate /var partition; etc.).
 _SYSTEMIC_FAILS = {
     "aide_installed",
+    "faillock_unlock_time",
     "single_time_sync_daemon",
     "cron_d_permissions",
     "cron_daily_permissions",
