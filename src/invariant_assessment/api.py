@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from invariant_assessment import CHECKS, document_slug_for_os, family_for_os, internal_auth
-from invariant_assessment.facts import clean_hostname, collect_facts
+from invariant_assessment.facts import clean_hostname, collect_facts, evaluate_check
 from invariant_assessment.observability import timed
 from invariant_assessment.transport import (
     DockerExecTransport,
@@ -165,8 +165,7 @@ def _evaluate_all(facts, target_label: str, extra: dict | None = None) -> RunRes
     results = [
         CheckResult(
             check_id=check.id,
-            status="PASS" if check.evaluate(facts) else "FAIL",
-            evidence=check.evidence(facts),
+            **evaluate_check(check, facts),
         )
         for check in applicable_checks
     ]
