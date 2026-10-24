@@ -1,5 +1,5 @@
 # Ubuntu 20.04 -- clean baseline for the bxsec demo. Should PASS both
-# assessed controls (5.1.20 sshd PermitRootLogin, 7.1.5 /etc/shadow perms).
+# assessed checks (ssh_permit_root_login, etc_shadow_permissions).
 FROM ubuntu:20.04
 
 RUN apt-get update \

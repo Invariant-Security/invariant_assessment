@@ -1,4 +1,4 @@
-# Sem Postgres, sem Playwright, sem import de documento CIS -- este
+# Sem Postgres, sem Playwright, sem import de documentos -- este
 # serviço não toca banco (ver api.py). Só sobe os 6 containers reais de
 # teste, roda a suíte inteira (unitários + integração via TestClient) e
 # derruba -- bem mais enxuto que o CI do monólito.
