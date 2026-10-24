@@ -35,6 +35,8 @@ ALLOW_TOKENS = {
     ("pyproject.toml", "0.1.0"),  # package version
     ("tests/fixtures/docker-compose.yml", "127.0.0.1"),  # loopback-only port binding
     ("tests/fixtures/docker/ssh-target/Dockerfile", "127.0.0.1"),  # loopback comment
+    ("tests/fixtures/docker/ssh-target-nonroot/Dockerfile", "127.0.0.1"),  # loopback comment
+    ("tests/test_not_assessed_ssh.py", "127.0.0.1"),  # loopback SSH fixture
     ("tests/test_internal_auth.py", "127.0.0.1"),  # loopback test server
     ("tests/test_transport.py", "127.0.0.1"),  # loopback SSH fixture
     ("tests/test_host_key_pin.py", "127.0.0.1"),  # loopback in-process SSH server

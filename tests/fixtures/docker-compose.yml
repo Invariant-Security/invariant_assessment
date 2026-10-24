@@ -59,3 +59,10 @@ services:
     build: ./docker/ssh-target
     container_name: invariant-assessment-test-ssh-target
     ports: ["127.0.0.1:22022:22"]
+
+  # INV-49: sshd + auditd host, logged into over SSH as a non-root user
+  # (tests/test_not_assessed_ssh.py). Own port: 22023.
+  ssh-target-nonroot:
+    build: ./docker/ssh-target-nonroot
+    container_name: invariant-assessment-test-ssh-target-nonroot
+    ports: ["127.0.0.1:22023:22"]
