@@ -292,3 +292,17 @@ def test_http_invalid_host_key_payloads_are_422(extra):
     body = {"host": "127.0.0.1", "port": 1, "username": "u", "auth_method": "key", "key_material": "k", **extra}
     for path in ("/assessment/check-remote", "/assessment/run-remote"):
         assert client.post(path, json=body).status_code == 422
+
+
+@pytest.mark.parametrize("path", ["/assessment/check-remote", "/assessment/run-remote"])
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"host_key_type": "ssh-ed25519", "host_key_fingerprint": "SHA256:short"}],
+)
+def test_422_never_echoes_secrets(path, extra):
+    pw, key = "MARKER-PASSWORD-" + "q" * 8, "MARKER-KEY-MATERIAL-" + "z" * 8
+    body = {"host": "h", "username": "u", "auth_method": "password", "password": pw, "key_material": key, **extra}
+    r = client.post(path, json=body)
+    assert r.status_code == 422
+    assert pw not in r.text and key not in r.text
+    assert all(set(item) == {"loc", "msg", "type"} for item in r.json()["detail"])

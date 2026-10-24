@@ -8,7 +8,9 @@ level, scored flag) is invariant_api's job, which owns the database.
 
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
 from invariant_assessment import CHECKS, document_slug_for_os, family_for_os, internal_auth
@@ -26,6 +28,18 @@ from invariant_assessment.transport import (
 
 app = FastAPI(title="Invariant Assessment")
 internal_auth.install(app)
+
+
+@app.exception_handler(RequestValidationError)
+def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's default 422 echoes `input` (and `ctx`), which for the
+    run-remote/check-remote bodies is the SSH password or private key. Only
+    loc/msg/type leave this service.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]},
+    )
 
 
 @app.get("/healthz")
