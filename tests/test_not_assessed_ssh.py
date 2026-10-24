@@ -7,7 +7,7 @@ from collections import Counter
 
 import paramiko
 import pytest
-from conftest import AUTH_HEADERS
+from conftest import AUTH_HEADERS, SSH_TARGET_NONROOT_PORT
 from fastapi.testclient import TestClient
 
 from invariant_assessment.api import app
@@ -17,7 +17,7 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(app, headers=AUTH_HEADERS)
 
-_HOST, _PORT = "127.0.0.1", 22023
+_HOST, _PORT = "127.0.0.1", SSH_TARGET_NONROOT_PORT
 _USER, _PASSWORD = "invariant-nonroot", "invariant-nonroot-password"
 
 

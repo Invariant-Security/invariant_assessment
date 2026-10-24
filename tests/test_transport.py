@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import paramiko
 import pytest
-from conftest import AUTH_HEADERS
+from conftest import AUTH_HEADERS, FIXTURE_PREFIX, SSH_TARGET_PORT
 from fastapi.testclient import TestClient
 
 from invariant_assessment.api import app
@@ -38,9 +38,9 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(app, headers=AUTH_HEADERS)
 
-_SSH_TARGET_CONTAINER = "invariant-assessment-test-ssh-target"
+_SSH_TARGET_CONTAINER = f"{FIXTURE_PREFIX}-assessment-test-ssh-target"
 _SSH_HOST = "127.0.0.1"
-_SSH_PORT = 22022
+_SSH_PORT = SSH_TARGET_PORT
 _SSH_USER = "invariant-test"
 _SSH_PASSWORD = "invariant-test-password"
 

@@ -17,9 +17,11 @@ dependencies = [
 # of those models.
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "httpx2"]
+dev = ["pytest", "pytest-cov", "pytest-timeout", "httpx2"]
 
 [tool.pytest.ini_options]
+timeout = 300
+faulthandler_timeout = 120
 markers = [
     "integration: hits real Docker containers via `docker exec` instead of synthetic SystemFacts fixtures",
 ]

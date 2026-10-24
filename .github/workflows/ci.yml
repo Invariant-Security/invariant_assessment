@@ -13,10 +13,21 @@ on:
 permissions:
   contents: read
 
+# Só PR cancela a rodada anterior; dev/main nunca.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Containers e portas próprios da rodada (tests/fixtures/README.md):
+    # nada de colidir com sessões locais nem com o CI de outro repo.
+    env:
+      COMPOSE_PROJECT_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      INVARIANT_FIXTURE_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -25,7 +36,13 @@ jobs:
       # Mesmo lock da imagem (Dockerfile); só as ferramentas de teste
       # (extra `dev`) continuam sem pin.
       - run: pip install --require-hashes --no-deps -r requirements.lock
-      - run: pip install --no-deps -e . && pip install pytest pytest-cov httpx2
+      - run: pip install --no-deps -e . && pip install pytest pytest-cov pytest-timeout httpx2
+
+      - name: Pick ports for this run
+        run: |
+          base=$((20000 + GITHUB_RUN_ID % 20000))
+          echo "INVARIANT_SSH_TARGET_PORT=$base" >> "$GITHUB_ENV"
+          echo "INVARIANT_SSH_TARGET_NONROOT_PORT=$((base + 1))" >> "$GITHUB_ENV"
 
       - name: Build and start the 6 fixed test containers
         run: docker compose -f tests/fixtures/docker-compose.yml up -d --build --wait --wait-timeout 120

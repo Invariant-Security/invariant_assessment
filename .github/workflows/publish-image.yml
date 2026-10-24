@@ -24,8 +24,14 @@ permissions:
   contents: read
   packages: write
 
+# push de tag/workflow_run: nunca cancela (nada de PR aqui).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   publish:
+    timeout-minutes: 15
     # Mesmas travas dos deploy*.yml: só CI verde, de push, neste repo.
     if: >-
       github.event_name != 'workflow_run' || (
