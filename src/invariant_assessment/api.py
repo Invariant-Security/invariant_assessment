@@ -6,14 +6,17 @@ evidence" -- turning that into a real Finding (external_id, remediation,
 level, scored flag) is invariant_api's job, which owns the database.
 """
 
+from typing import Literal
+
 from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from invariant_assessment import CHECKS, document_slug_for_os, family_for_os, internal_auth
 from invariant_assessment.facts import clean_hostname, collect_facts
 from invariant_assessment.observability import timed
 from invariant_assessment.transport import (
     DockerExecTransport,
+    HostKeyMismatch,
     SSHTransport,
     TransportAuthError,
     TransportTimeoutError,
@@ -54,9 +57,17 @@ class CheckResult(BaseModel):
     evidence: str
 
 
+class HostKeyObserved(BaseModel):
+    type: str
+    fingerprint: str
+
+
 class RunResponse(BaseModel):
     document: str
     results: list[CheckResult]
+    # SSH only. "operator" = matched the pin; "first_use" = accepted without a pin.
+    host_key_observed: HostKeyObserved | None = None
+    host_key_verification: Literal["operator", "first_use"] | None = None
 
 
 class SSHRemoteTarget(BaseModel):
@@ -72,9 +83,60 @@ class SSHRemoteTarget(BaseModel):
     auth_method: str  # "key" | "password"
     key_material: str | None = Field(default=None, repr=False)
     password: str | None = Field(default=None, repr=False)
+    # Same names/values as invariant_contracts v1 SSHCredentials (v0.4.0);
+    # copied, not imported, on purpose (see pyproject.toml).
+    host_key_type: Literal[
+        "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"
+    ] | None = None
+    host_key_fingerprint: str | None = Field(default=None, pattern=r"^SHA256:[A-Za-z0-9+/]{43}$")
+    host_key_mode: Literal["pinned", "first_use"] | None = None
+
+    @model_validator(mode="after")
+    def _host_key_rules(self) -> "SSHRemoteTarget":
+        if (self.host_key_type is None) != (self.host_key_fingerprint is None):
+            raise ValueError("host_key_type e host_key_fingerprint andam juntos")
+        if self.host_key_mode == "pinned" and self.host_key_fingerprint is None:
+            raise ValueError("host_key_mode=pinned exige host_key_type e host_key_fingerprint")
+        if self.host_key_mode == "first_use" and self.host_key_fingerprint is not None:
+            raise ValueError("host_key_mode=first_use não aceita host_key_fingerprint")
+        if self.auth_method == "password" and self.host_key_fingerprint is None:
+            raise ValueError("auth_method=password exige host_key_fingerprint (senha nunca vai com first_use)")
+        return self
+
+    def transport(self) -> SSHTransport:
+        # No pin (old payload, or first_use) = TOFU.
+        return SSHTransport(
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            auth_method=self.auth_method,
+            key_material=self.key_material,
+            password=self.password,
+            host_key_type=self.host_key_type,
+            host_key_fingerprint=self.host_key_fingerprint,
+        )
 
 
-def _evaluate_all(facts, target_label: str) -> RunResponse:
+def _host_key_fields(transport: SSHTransport) -> dict:
+    observed = transport.host_key_observed
+    return {
+        "host_key_observed": observed,
+        "host_key_verification": ("operator" if transport.host_key_fingerprint else "first_use") if observed else None,
+    }
+
+
+def _mismatch(e: HostKeyMismatch) -> HTTPException:
+    """409 + detail.code=host_key_mismatch; only what the server presented."""
+    return HTTPException(
+        409,
+        {
+            "code": "host_key_mismatch",
+            "host_key_observed": {"type": e.key_type, "fingerprint": e.fingerprint},
+        },
+    )
+
+
+def _evaluate_all(facts, target_label: str, extra: dict | None = None) -> RunResponse:
     if not facts.os_id or not facts.os_version_id:
         raise HTTPException(422, f"could not detect OS for {target_label!r}")
     document = document_slug_for_os(facts.os_id, facts.os_version_id)
@@ -94,7 +156,7 @@ def _evaluate_all(facts, target_label: str) -> RunResponse:
         )
         for check in applicable_checks
     ]
-    return RunResponse(document=document, results=results)
+    return RunResponse(document=document, results=results, **(extra or {}))
 
 
 class CheckResponse(BaseModel):
@@ -114,6 +176,8 @@ class CheckResponse(BaseModel):
     reason_code: str | None = None  # "collection_failed" | "os_not_detected" | "unsupported_os"
     reason: str | None = None  # human-readable, never a raw str(exception)
     hostname: str | None = None  # None if collection failed or the result didn't look like a real hostname
+    host_key_observed: HostKeyObserved | None = None  # SSH only, see RunResponse
+    host_key_verification: Literal["operator", "first_use"] | None = None
 
 
 @app.post("/assessment/check", response_model=CheckResponse)
@@ -188,25 +252,20 @@ def run_assessment_remote(payload: SSHRemoteTarget) -> RunResponse:
     docker exec. The timed() label below deliberately includes only
     username@host:port -- NEVER auth_method/key_material/password.
     """
-    transport = SSHTransport(
-        host=payload.host,
-        port=payload.port,
-        username=payload.username,
-        auth_method=payload.auth_method,
-        key_material=payload.key_material,
-        password=payload.password,
-    )
+    transport = payload.transport()
     label = f"collect_facts:ssh:{payload.username}@{payload.host}:{payload.port}"
     try:
         with timed(label):
             facts = collect_facts(transport)
+    except HostKeyMismatch as e:
+        raise _mismatch(e) from e
     except TransportAuthError as e:
         raise HTTPException(401, str(e)) from e
     except TransportUnreachableError as e:
         raise HTTPException(502, str(e)) from e
     except TransportTimeoutError as e:
         raise HTTPException(504, str(e)) from e
-    return _evaluate_all(facts, payload.host)
+    return _evaluate_all(facts, payload.host, _host_key_fields(transport))
 
 
 @app.post("/assessment/check-remote", response_model=CheckResponse)
@@ -220,14 +279,7 @@ def check_remote(payload: SSHRemoteTarget, response: Response) -> CheckResponse:
     you anything about this host".
     """
     response.headers["Cache-Control"] = "no-store"
-    transport = SSHTransport(
-        host=payload.host,
-        port=payload.port,
-        username=payload.username,
-        auth_method=payload.auth_method,
-        key_material=payload.key_material,
-        password=payload.password,
-    )
+    transport = payload.transport()
     try:
         facts = collect_facts(transport)
     except LookupError:
@@ -235,7 +287,10 @@ def check_remote(payload: SSHRemoteTarget, response: Response) -> CheckResponse:
             testable=False,
             reason_code="collection_failed",
             reason="Could not collect information from this host (check connectivity).",
+            **_host_key_fields(transport),
         )
+    except HostKeyMismatch as e:
+        raise _mismatch(e) from e
     except TransportAuthError as e:
         raise HTTPException(401, str(e)) from e
     except TransportUnreachableError as e:
@@ -249,6 +304,7 @@ def check_remote(payload: SSHRemoteTarget, response: Response) -> CheckResponse:
             reason_code="os_not_detected",
             reason="Could not detect the operating system for this host.",
             hostname=hostname,
+            **_host_key_fields(transport),
         )
     try:
         family = family_for_os(facts.os_id, facts.os_version_id)
@@ -260,7 +316,9 @@ def check_remote(payload: SSHRemoteTarget, response: Response) -> CheckResponse:
             reason_code="unsupported_os",
             reason=f"{facts.os_id} {facts.os_version_id} is not supported yet.",
             hostname=hostname,
+            **_host_key_fields(transport),
         )
     return CheckResponse(
-        testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family, hostname=hostname
+        testable=True, os_id=facts.os_id, os_version_id=facts.os_version_id, family=family, hostname=hostname,
+        **_host_key_fields(transport),
     )

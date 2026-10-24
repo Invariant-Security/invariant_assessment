@@ -6,6 +6,13 @@ Debian and Ubuntu). No Postgres access -- returns each check's own `check_id`
 with status/evidence; `invariant_api` maps the id to the matching control to
 build a `Finding`.
 
+SSH targets: the host key is verified before any credential is sent. With
+`host_key_type` + `host_key_fingerprint` (`SHA256:...`) the connection is
+pinned and a different key gives HTTP 409 (`detail.code = host_key_mismatch`);
+without them it is trust-on-first-use. Responses carry `host_key_observed`
+and `host_key_verification` (`operator` | `first_use`). Password auth requires
+a pin.
+
 Extracted from the `Invariant-Security/Invariant` monolith
 (`src/invariant/assessment/`) as part of its split into `invariant_*`
 services. `evaluate()`/`evidence()` logic for every `Check` is ported
