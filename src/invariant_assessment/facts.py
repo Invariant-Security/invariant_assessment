@@ -12,6 +12,7 @@ line in the collection script) -- individual Check.evaluate()/evidence()
 functions in invariant.assessment never run their own docker exec.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from invariant_assessment.transport import Transport
@@ -72,7 +73,7 @@ _MARKER_STAT_PREFIX = "===STAT:"
 # of this module. A home directory that doesn't exist (`[ -d "$h" ]` false)
 # simply emits no HOME line for that user -- evaluate() treats a missing
 # entry as "home doesn't exist", it's not a collection error.
-_INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
+_INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; [ -r "$h" ] && [ -x "$h" ] || { echo "$h: Permission denied"; continue; }; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
 
 # (SystemFacts attribute name, output marker, shell command). Read as plain
 # text -- each check does its own parsing/grepping over the raw content,
@@ -176,7 +177,7 @@ _TEXT_BLOCKS = [
     (
         "boot_grub_audit_text",
         "===BOOT_GRUB_AUDIT===",
-        r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>/dev/null | grep -v 'audit=1' 2>&1",
+        r"find /boot -type f -name 'grub.cfg' -exec grep -Ph -- '^\h*linux' {} + 2>&1 | grep -v 'audit=1' 2>&1",
     ),
     ("interactive_user_files_text", "===INTERACTIVE_USER_FILES===", _INTERACTIVE_USER_FILES_CMD),
     # auditd.conf directives + the file-system evidence the 10 Group A (per
@@ -326,14 +327,19 @@ def _collect_script() -> str:
     # `_parse_collect_output` relies on that to slice the output
     # positionally instead of needing every command to succeed.
     text_commands = "; ".join(
-        f"echo '{marker}'; {command}" for _, marker, command in _TEXT_BLOCKS
+        f"echo '{marker}'; {_dir_guard(attr)}{command}; {_RC_CMD}" for attr, marker, command in _TEXT_BLOCKS
     )
     stat_commands = "\n".join(
         f"echo '{_MARKER_STAT_PREFIX}{path}==='; "
-        f"stat -Lc 'mode=%a uid=%u gid=%g gname=%G' {path} 2>&1"
+        f"stat -Lc 'mode=%a uid=%u gid=%g gname=%G' {path} 2>&1; {_RC_CMD}"
         for path in _STAT_PATHS
     )
     return (
+        # LC_ALL=C: error messages come back in English, so
+        # _classify() can match them whatever the target's locale is.
+        # exec 2>&1: stderr of commands that do not redirect it stays inside
+        # its own segment instead of landing at the end of the output.
+        "export LC_ALL=C; exec 2>&1; "
         f"echo '{_MARKER_OS_RELEASE}'; cat /etc/os-release 2>&1; "
         # Absolute path, not bare `sshd` -- confirmed live against a real
         # SSH-reached host (unprivileged, non-login shell): PATH there is
@@ -345,10 +351,142 @@ def _collect_script() -> str:
         # instead of the real answer (present, but this unprivileged user
         # can't read the host keys sshd -T needs, i.e. UNKNOWN). Debian/
         # Ubuntu (the only supported family) always ships sshd at this path.
-        f"echo '{_MARKER_SSHD_CONFIG}'; /usr/sbin/sshd -T 2>&1; "
+        f"echo '{_MARKER_SSHD_CONFIG}'; /usr/sbin/sshd -T 2>&1; {_RC_CMD}; "
         f"{text_commands}; "
         f"{stat_commands}"
     )
+
+# --- collection outcome (INV-49) -------------------------------------------
+# Every command's exit status is echoed right after it, so a fact that
+# could not be read is told apart from one that was read and says "off".
+_RC_CMD = "printf '\\n===RC=%s===\\n' \"$?\""
+_RC_RE = re.compile(r"(?:\n|^)===RC=(\d+)===$")
+
+# Globs hide an unreadable directory: the shell hands `cat` the literal
+# pattern and the error is "No such file". Test the directory itself.
+_ROOT_ONLY = {
+    # `bash -l` as another user reports THAT user's PATH, not root's.
+    "root_path_probe_text": "root login PATH: You must be root",
+}
+_GLOB_DIRS = {
+    "pwquality_text": "/etc/security/pwquality.conf.d",
+    "audit_rules_text": "/etc/audit/rules.d",
+    "timesyncd_text": "/etc/systemd/timesyncd.conf.d",
+}
+
+
+def _dir_guard(attr: str) -> str:
+    if attr in _ROOT_ONLY:
+        return f'[ "$(id -u)" = 0 ] || echo "{_ROOT_ONLY[attr]}"; '
+    d = _GLOB_DIRS.get(attr)
+    if not d:
+        return ""
+    return f'if [ -d {d} ] && ! {{ [ -r {d} ] && [ -x {d} ]; }}; then echo "{d}: Permission denied"; fi; '
+
+
+_UNREADABLE = ("permission denied", "operation not permitted", "you must be root")
+# "not found" = the command itself is absent (`sh: 1: sshd: not found`).
+_MISSING = ("no such file or directory", "not found")
+# `sshd -T` as a non-root user fails with this (host keys are root-only).
+_SSHD_UNREADABLE = _UNREADABLE + ("no hostkeys available",)
+_PATH_RE = re.compile(r"(/[\w./@+-]+)")
+
+
+def _split_rc(segment: str) -> tuple[str, int | None]:
+    m = _RC_RE.search(segment)
+    if not m:
+        return segment, None
+    return segment[: m.start()].strip("\n"), int(m.group(1))
+
+
+def _classify(text: str, rc: int | None, strict: bool, label: str, patterns=_UNREADABLE):
+    """None | ("unreadable", "<where> not readable (<why>)") | ("missing", "").
+
+    Rule for an unrecognized failure: exit status != 0 AND non-empty output
+    matching no known pattern AND `strict` (the segment is a plain `cat`/
+    `dpkg-query`, where non-zero always means an error). Segments built
+    from pipes, loops or commands whose status carries information (grep
+    without a match, systemctl is-enabled of a disabled unit, mount
+    probes, augenrules --check) are not strict: only patterns apply.
+    """
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    for ln in lines:
+        low = ln.lower()
+        for p in patterns:
+            if p in low:
+                m = _PATH_RE.search(ln)
+                return "unreadable", f"{m.group(1) if m else label} not readable ({p})"
+    if any(p in ln.lower() for ln in lines for p in _MISSING):
+        return "missing", ""
+    if strict and rc and lines:
+        return "unreadable", f"{label} not readable (command failed, exit {rc}: {lines[0][:80]})"
+    return None
+
+
+class _RecordingStats(dict):
+    """file_stats that remembers which paths a check looked at."""
+
+    def __init__(self, data, read):
+        super().__init__(data)
+        self._read = read
+
+    def __getitem__(self, k):
+        self._read.add(f"file_stats:{k}")
+        return super().__getitem__(k)
+
+    def get(self, k, default=None):
+        self._read.add(f"file_stats:{k}")
+        return super().get(k, default)
+
+    def __contains__(self, k):
+        self._read.add(f"file_stats:{k}")
+        return super().__contains__(k)
+
+    def _all(self):
+        self._read.update(f"file_stats:{k}" for k in dict.keys(self))
+
+    def __iter__(self):
+        self._all()
+        return super().__iter__()
+
+    def items(self):
+        self._all()
+        return super().items()
+
+    def values(self):
+        self._all()
+        return super().values()
+
+    def keys(self):
+        self._all()
+        return super().keys()
+
+
+class _RecordingFacts:
+    def __init__(self, facts):
+        self._facts = facts
+        self.read: set[str] = set()
+
+    def __getattr__(self, name):
+        value = getattr(self._facts, name)
+        if name == "file_stats":
+            return _RecordingStats(value, self.read)
+        self.read.add(name)
+        return value
+
+
+def evaluate_check(check, facts: "SystemFacts") -> dict:
+    """{"status", "evidence"} for one check. NOT_ASSESSED (no PASS/FAIL, no
+    benchmark wording) if the check read any fact that could not be read
+    from the target; which facts a check reads is recorded, not declared.
+    """
+    rec = _RecordingFacts(facts)
+    passed = check.evaluate(rec)
+    evidence = check.evidence(rec)
+    bad = sorted(k for k in rec.read if k in facts.unreadable)
+    if bad:
+        return {"status": "NOT_ASSESSED", "evidence": f"not assessed: {facts.unreadable[bad[0]]}"}
+    return {"status": "PASS" if passed else "FAIL", "evidence": evidence}
 
 
 @dataclass
@@ -407,6 +545,12 @@ class SystemFacts:
     # broken config all produce "no directives parsed"), and distinguishing
     # those matters downstream (invariant_api's SSH applicability logic).
     sshd_probe_raw: str = ""
+    # Collection outcome (INV-49). unreadable: fact name (or
+    # "file_stats:<path>") -> "<path> not readable (<why>)". missing: fact
+    # names whose file/command does not exist -- still evaluated normally,
+    # absence is often the answer.
+    unreadable: dict[str, str] = field(default_factory=dict)
+    missing: set[str] = field(default_factory=set)
 
 
 def _parse_os_release(text: str) -> dict[str, str]:
@@ -500,6 +644,28 @@ def _parse_collect_output(output: str) -> SystemFacts:
         end = positions[i + 1]
         segments[marker] = output[start:end].strip("\n")
 
+    unreadable: dict[str, str] = {}
+    missing: set[str] = set()
+    rcs: dict[str, int | None] = {}
+    for marker in ordered_markers[1:]:
+        segments[marker], rcs[marker] = _split_rc(segments[marker])
+
+    def note(key, outcome):
+        if outcome and outcome[0] == "unreadable":
+            unreadable[key] = outcome[1]
+        elif outcome:
+            missing.add(key)
+
+    sshd_outcome = _classify(
+        segments[_MARKER_SSHD_CONFIG], None, False, "sshd -T", _SSHD_UNREADABLE
+    )
+    note("sshd_config", sshd_outcome)
+    note("sshd_probe_raw", sshd_outcome)
+    for attr, marker, command in _TEXT_BLOCKS:
+        key = "installed_packages" if attr == "installed_packages_text" else attr
+        strict = command.startswith(("cat ", "dpkg-query"))
+        note(key, _classify(segments[marker], rcs[marker], strict, attr))
+
     os_release = _parse_os_release(segments[_MARKER_OS_RELEASE])
     sshd_config = parse_sshd_config(segments[_MARKER_SSHD_CONFIG])
     text_values = {attr: segments[marker] for attr, marker, _ in _TEXT_BLOCKS}
@@ -515,7 +681,10 @@ def _parse_collect_output(output: str) -> SystemFacts:
             if f"{_MARKER_STAT_PREFIX}{p}===" in remainder[start:]
         ]
         end = min(next_marker_positions) if next_marker_positions else len(remainder)
-        file_stats[path] = _parse_stat_line(remainder[start:end])
+        stat_text, stat_rc = _split_rc(remainder[start:end].strip("\n"))
+        file_stats[path] = _parse_stat_line(stat_text)
+        outcome = _classify(stat_text, stat_rc, True, path)
+        note(f"file_stats:{path}", outcome)
 
     return SystemFacts(
         os_id=os_release.get("ID"),
@@ -523,6 +692,8 @@ def _parse_collect_output(output: str) -> SystemFacts:
         sshd_config=sshd_config,
         sshd_probe_raw=segments[_MARKER_SSHD_CONFIG],
         file_stats=file_stats,
+        unreadable=unreadable,
+        missing=missing,
         hostname_probe_raw=text_values["hostname_probe_raw"],
         passwd_text=text_values["passwd_text"],
         group_text=text_values["group_text"],

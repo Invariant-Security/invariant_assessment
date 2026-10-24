@@ -35,6 +35,8 @@ def test_supported_os_is_testable(monkeypatch):
         "reason_code": None,
         "reason": None,
         "hostname": None,
+        "host_key_observed": None,
+        "host_key_verification": None,
     }
 
 
