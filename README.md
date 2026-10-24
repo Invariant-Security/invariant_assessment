@@ -34,3 +34,12 @@ uvicorn invariant_assessment.api:app --reload
 `requirements.lock` (hashed) is what the image and CI install; `pyproject.toml` keeps the loose ranges.
 Regenerate (add/bump a dep): in `python:3.12.14-slim@<digest>`, `pip install pip-tools && pip-compile --generate-hashes --strip-extras --allow-unsafe -o requirements.lock` with the deps from `pyproject.toml` as input.
 Bump the base: `docker buildx imagetools inspect python:3.12.14-slim` (or the new tag) → put the index `Digest:` in the Dockerfile `ARG BASE`, then rebuild and run `pip check`.
+
+## Contributing
+
+Contributions are welcome under the DCO, with no CLA. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[Apache License 2.0](LICENSE).
