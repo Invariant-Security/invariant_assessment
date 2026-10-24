@@ -147,4 +147,4 @@ def test_sshd_check_is_not_assessed_without_root():
 def test_no_benchmark_wording_in_not_assessed_evidence():
     f = _facts(blocks={"shadow_text": ("cat: /etc/shadow: Permission denied", 1)})
     r = evaluate_check(_check(lambda x: x.shadow_text), f)
-    assert "Ensure" not in r["evidence"]
+    assert r["evidence"].startswith("not assessed: ") and "benchmark" not in r["evidence"].lower()
