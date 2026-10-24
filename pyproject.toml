@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "paramiko>=2.9",  # disabled_algorithms + rsa-sha2 host keys (INV-12); lock has 5.0.0
+    "paramiko>=2.9",  # disabled_algorithms + rsa-sha2 host keys (INV-12)
 ]
 # ponytail: invariant_contracts is NOT a dependency here on purpose -- the
 # Opção B communication design means this service never constructs a
