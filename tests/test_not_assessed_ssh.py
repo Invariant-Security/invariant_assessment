@@ -47,3 +47,16 @@ def test_nonroot_ssh_full_run_marks_unreadable_checks_not_assessed():
     for r in results.values():
         if r["status"] == "NOT_ASSESSED":
             assert r["evidence"].startswith("not assessed: ") and "not readable" in r["evidence"]
+
+
+def test_nonroot_ssh_audit_sync_check_not_assessed_not_false_fail():
+    """INV-59: an SSH session has no /sbin in PATH, so `augenrules` was "not
+    found" and the check read as FAIL on a host that has auditd. With sbin in
+    the collector's PATH the tool runs; /etc/audit is root-only, so the honest
+    answer for this user is NOT_ASSESSED."""
+    body = {"host": _HOST, "port": _PORT, "username": _USER, "auth_method": "password", "password": _PASSWORD, **_pin()}
+    resp = client.post("/assessment/run-remote", json=body)
+    assert resp.status_code == 200, resp.text
+    r = {x["check_id"]: x for x in resp.json()["results"]}["audit_rules_running_matches_disk"]
+    assert r["status"] == "NOT_ASSESSED", r
+    assert "augenrules: not found" not in r["evidence"]

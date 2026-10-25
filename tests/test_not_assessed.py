@@ -36,7 +36,7 @@ def _facts(**kw):
 
 def test_script_forces_c_locale_and_merges_stderr():
     s = _collect_script()
-    assert s.startswith("export LC_ALL=C; exec 2>&1;")
+    assert s.startswith("export LC_ALL=C PATH=") and "; exec 2>&1;" in s[:200]
     assert "RC=%s" in s
 
 

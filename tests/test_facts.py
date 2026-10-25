@@ -195,3 +195,12 @@ def test_audit_conf_text_logdir_never_falls_back_to_cwd_when_auditd_is_absent(tm
     # collect_script() output -- sanity-check it's actually present so this
     # test would fail loudly if _TEXT_BLOCKS' shape ever changes underneath it.
     assert marker
+
+
+def test_collect_script_has_sbin_in_path():
+    """INV-59: SSH sessions lack /sbin and /usr/sbin; bare augenrules/auditctl/
+    sysctl/... must resolve."""
+    from invariant_assessment.facts import _collect_script
+
+    head = _collect_script().split("exec 2>&1", 1)[0]
+    assert "/usr/sbin" in head and "/sbin" in head and "PATH=" in head
