@@ -9,7 +9,7 @@ matching each container's own story.
 """
 
 import pytest
-from conftest import AUTH_HEADERS
+from conftest import AUTH_HEADERS, FIXTURE_PREFIX
 from fastapi.testclient import TestClient
 
 from invariant_assessment.api import app
@@ -18,12 +18,13 @@ pytestmark = pytest.mark.integration
 
 client = TestClient(app, headers=AUTH_HEADERS)
 
-# The 68 check ids that fail identically on all 6 containers -- none of the
+# The 71 check ids that fail identically on all 6 containers -- none of the
 # demo/test Dockerfiles were ever hardened for these (missing packages:
 # auditd/AIDE/ufw/sudo/libpam-pwquality; no audit rules loaded; no
 # systemd/journald PID 1; no bootloader; no separate /var partition; etc.).
 _SYSTEMIC_FAILS = {
     "aide_installed",
+    "faillock_unlock_time",
     "single_time_sync_daemon",
     "cron_d_permissions",
     "cron_daily_permissions",
@@ -111,30 +112,30 @@ def _assert_fails_only(target: str, expected_extra: set[str]) -> None:
 
 
 def test_debian_baseline_fails_only_systemic_gaps():
-    _assert_fails_only("invariant-debian-baseline", set())
+    _assert_fails_only(f"{FIXTURE_PREFIX}-debian-baseline", set())
 
 
 def test_debian_ssh_bad_fails_permit_root_login_too():
-    _assert_fails_only("invariant-debian-ssh-bad", {"ssh_permit_root_login"})
+    _assert_fails_only(f"{FIXTURE_PREFIX}-debian-ssh-bad", {"ssh_permit_root_login"})
 
 
 def test_debian_permissions_bad_fails_shadow_permissions_too():
     _assert_fails_only(
-        "invariant-debian-permissions-bad", {"etc_shadow_permissions"}
+        f"{FIXTURE_PREFIX}-debian-permissions-bad", {"etc_shadow_permissions"}
     )
 
 
 def test_ubuntu_baseline_fails_only_systemic_gaps():
-    _assert_fails_only("invariant-ubuntu-baseline", set())
+    _assert_fails_only(f"{FIXTURE_PREFIX}-ubuntu-baseline", set())
 
 
 def test_ubuntu_ssh_bad_fails_permit_root_login_too():
-    _assert_fails_only("invariant-ubuntu-ssh-bad", {"ssh_permit_root_login"})
+    _assert_fails_only(f"{FIXTURE_PREFIX}-ubuntu-ssh-bad", {"ssh_permit_root_login"})
 
 
 def test_ubuntu_permissions_bad_fails_shadow_permissions_too():
     _assert_fails_only(
-        "invariant-ubuntu-permissions-bad", {"etc_shadow_permissions"}
+        f"{FIXTURE_PREFIX}-ubuntu-permissions-bad", {"etc_shadow_permissions"}
     )
 
 

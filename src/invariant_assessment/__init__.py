@@ -723,7 +723,6 @@ def _evidence_pwhistory_enforce_for_root(facts: SystemFacts) -> str:
 # two-part shape as pwhistory_remember above: a faillock.conf directive, AND
 # (if pam_faillock.so also sets the same argument inline on common-auth) that
 # inline value must independently not fall in a disallowed range.
-_FAILLOCK_UNLOCK_TIME_BAD_RE = re.compile(r"(?<!root_)unlock_time\s*=\s*([1-9]|[1-9][0-9]|[1-8][0-9]{2})\b")
 _FAILLOCK_DENY_BAD_RE = re.compile(r"deny\s*=\s*(0|[6-9]|[1-9][0-9]+)\b")
 _FAILLOCK_ROOT_UNLOCK_TIME_BAD_RE = re.compile(r"root_unlock_time\s*=\s*([1-9]|[1-5][0-9])\b")
 
@@ -736,27 +735,45 @@ def _pam_faillock_lines(facts: SystemFacts) -> list[str]:
     return [line.strip() for line in facts.pam_common_auth.splitlines() if "pam_faillock.so" in line]
 
 
-def _evaluate_faillock_unlock_time(facts: SystemFacts) -> bool:
-    """faillock.conf's unlock_time must be 0 (never) or >= 900 (15 minutes) if set
-    at all -- absent is acceptable. AND, if pam_faillock.so's own unlock_time=
-    argument is set inline on common-auth, it must not fall in the disallowed
-    1-899 range either.
+_FAILLOCK_UNLOCK_TIME_DEFAULT = 600  # pam_faillock's own default when nothing sets it
+_FAILLOCK_UNLOCK_TIME_INLINE_RE = re.compile(r"(?<!root_)unlock_time\s*=\s*(\S+)")
+
+
+def _faillock_unlock_time_effective(facts: SystemFacts) -> list[tuple[str, str]]:
+    """(value, source) pairs as pam_faillock resolves them: an inline
+    unlock_time= on a pam_faillock.so line in common-auth wins for that line,
+    else faillock.conf's unlock_time, else the 600 s default. With no
+    pam_faillock.so line there is a single pair from conf/default.
     """
-    value = parse_pwquality_conf(facts.faillock_text).get("unlock_time")
-    if value is not None:
+    conf = parse_pwquality_conf(facts.faillock_text).get("unlock_time")
+    fallback = (conf, "faillock.conf") if conf is not None else (str(_FAILLOCK_UNLOCK_TIME_DEFAULT), "default")
+    out = []
+    for line in _pam_faillock_lines(facts):
+        m = _FAILLOCK_UNLOCK_TIME_INLINE_RE.search(line)
+        out.append((m.group(1), "common-auth inline") if m else fallback)
+    return out or [fallback]
+
+
+def _evaluate_faillock_unlock_time(facts: SystemFacts) -> bool:
+    """The effective unlock_time must be 0 (never unlock) or >= 900 seconds.
+    Absent everywhere means pam_faillock's 600 s default, which is too short.
+    Several pam_faillock.so lines may carry different inline values; the
+    conservative rule is that every line's effective value must be acceptable.
+    A non-integer value fails.
+    """
+    for value, _ in _faillock_unlock_time_effective(facts):
         try:
             n = int(value)
         except ValueError:
             return False
         if not (n == 0 or n >= 900):
             return False
-    return not any(_FAILLOCK_UNLOCK_TIME_BAD_RE.search(line) for line in _pam_faillock_lines(facts))
+    return True
 
 
 def _evidence_faillock_unlock_time(facts: SystemFacts) -> str:
-    value = parse_pwquality_conf(facts.faillock_text).get("unlock_time", "<not set>")
-    pam_lines = "; ".join(_pam_faillock_lines(facts)) or "<no pam_faillock.so line>"
-    return f"faillock.conf: unlock_time {value}; common-auth pam_faillock.so: {pam_lines}"
+    pairs = dict.fromkeys(_faillock_unlock_time_effective(facts))
+    return "; ".join(f"unlock_time {v} ({src})" for v, src in pairs)
 
 
 def _evaluate_faillock_deny(facts: SystemFacts) -> bool:

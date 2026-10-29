@@ -7,7 +7,7 @@ license = "Apache-2.0"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "paramiko",
+    "paramiko>=2.9",  # disabled_algorithms + rsa-sha2 host keys (INV-12)
 ]
 # ponytail: invariant_contracts is NOT a dependency here on purpose -- the
 # Opção B communication design means this service never constructs a
@@ -17,9 +17,11 @@ dependencies = [
 # of those models.
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "httpx2"]
+dev = ["pytest", "pytest-cov", "pytest-timeout", "httpx2"]
 
 [tool.pytest.ini_options]
+timeout = 300
+faulthandler_timeout = 120
 markers = [
     "integration: hits real Docker containers via `docker exec` instead of synthetic SystemFacts fixtures",
 ]

@@ -16,32 +16,32 @@ services:
   # live; tmpfs-mounting it would blank that on every container start.
   debian-baseline:
     build: ./docker/debian-baseline
-    container_name: invariant-debian-baseline
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-debian-baseline
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   debian-ssh-bad:
     build: ./docker/debian-ssh-bad
-    container_name: invariant-debian-ssh-bad
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-debian-ssh-bad
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   debian-permissions-bad:
     build: ./docker/debian-permissions-bad
-    container_name: invariant-debian-permissions-bad
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-debian-permissions-bad
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-baseline:
     build: ./docker/ubuntu-baseline
-    container_name: invariant-ubuntu-baseline
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-ubuntu-baseline
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-ssh-bad:
     build: ./docker/ubuntu-ssh-bad
-    container_name: invariant-ubuntu-ssh-bad
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-ubuntu-ssh-bad
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   ubuntu-permissions-bad:
     build: ./docker/ubuntu-permissions-bad
-    container_name: invariant-ubuntu-permissions-bad
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-ubuntu-permissions-bad
     tmpfs: [/tmp, /home, /var/tmp, /var/log, /var/log/audit]
 
   # Phase 2 (SSHTransport) fixture -- the only one of these 7 services
@@ -57,5 +57,12 @@ services:
   # picking this port, unrelated to this repo's own containers.
   ssh-target:
     build: ./docker/ssh-target
-    container_name: invariant-assessment-test-ssh-target
-    ports: ["127.0.0.1:22022:22"]
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-assessment-test-ssh-target
+    ports: ["127.0.0.1:${INVARIANT_SSH_TARGET_PORT:-22022}:22"]
+
+  # INV-49: sshd + auditd host, logged into over SSH as a non-root user
+  # (tests/test_not_assessed_ssh.py). Own port: 22023 (INVARIANT_SSH_TARGET_NONROOT_PORT).
+  ssh-target-nonroot:
+    build: ./docker/ssh-target-nonroot
+    container_name: ${INVARIANT_FIXTURE_PREFIX:-invariant}-assessment-test-ssh-target-nonroot
+    ports: ["127.0.0.1:${INVARIANT_SSH_TARGET_NONROOT_PORT:-22023}:22"]
