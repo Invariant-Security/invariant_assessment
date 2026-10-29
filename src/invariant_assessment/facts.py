@@ -339,7 +339,11 @@ def _collect_script() -> str:
         # _classify() can match them whatever the target's locale is.
         # exec 2>&1: stderr of commands that do not redirect it stays inside
         # its own segment instead of landing at the end of the output.
-        "export LC_ALL=C; exec 2>&1; "
+        # PATH: SSH non-login sessions lack /sbin and /usr/sbin (INV-59), so
+        # bare augenrules/auditctl/sysctl/iptables/modprobe/... came back
+        # "not found" and read as a false FAIL. Appended, so the target's own
+        # PATH order is kept.
+        'export LC_ALL=C PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"; exec 2>&1; '
         f"echo '{_MARKER_OS_RELEASE}'; cat /etc/os-release 2>&1; "
         # Absolute path, not bare `sshd` -- confirmed live against a real
         # SSH-reached host (unprivileged, non-login shell): PATH there is
@@ -371,6 +375,8 @@ _ROOT_ONLY = {
 _GLOB_DIRS = {
     "pwquality_text": "/etc/security/pwquality.conf.d",
     "audit_rules_text": "/etc/audit/rules.d",
+    # augenrules reads rules.d; /etc/audit itself (0750 root) hides it from -d (INV-59)
+    "audit_rules_sync_text": "/etc/audit",
     "timesyncd_text": "/etc/systemd/timesyncd.conf.d",
 }
 
