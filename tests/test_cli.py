@@ -149,7 +149,7 @@ def keys(tmp_path):
     for name, comment in (("id", MARKER), ("host", "host")):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(tmp_path / name)], check=True)
     pub = (tmp_path / "host.pub").read_text().split()
-    (tmp_path / "known_hosts").write_text(f"[127.0.0.1]:2222 {pub[0]} {pub[1]}\n")
+    (tmp_path / "known_hosts").write_text(f"[localhost]:2222 {pub[0]} {pub[1]}\n")
     return tmp_path
 
 
@@ -160,20 +160,20 @@ def no_marker(*texts):
 def test_ssh_known_hosts_success_hides_credential(capsys, keys, monkeypatch):
     monkeypatch.setattr(SSHTransport, "run", lambda self, script: _build_full_output())
     for fmt in ("json", "table"):
-        rc, out, err = run(capsys, "--ssh", "root@127.0.0.1:2222", "--key", str(keys / "id"),
+        rc, out, err = run(capsys, "--ssh", "root@localhost:2222", "--key", str(keys / "id"),
                            "--known-hosts", str(keys / "known_hosts"), "--format", fmt)
         assert rc == 0
         no_marker(out, err)
 
 
 def test_ssh_known_hosts_without_entry_is_usage_error(capsys, keys):
-    rc, out, err = run(capsys, "--ssh", "root@10.9.9.9", "--key", str(keys / "id"), "--known-hosts", str(keys / "known_hosts"))
+    rc, out, err = run(capsys, "--ssh", "root@other-host", "--key", str(keys / "id"), "--known-hosts", str(keys / "known_hosts"))
     assert rc == 2
     no_marker(out, err)
 
 
 def test_ssh_transport_error_hides_credential(capsys, keys):
-    rc, out, err = run(capsys, "--ssh", "root@127.0.0.1:2222", "--key", str(keys / "id"),
+    rc, out, err = run(capsys, "--ssh", "root@localhost:2222", "--key", str(keys / "id"),
                        "--known-hosts", str(keys / "known_hosts"))
     assert rc == 3  # nothing listens on 2222
     no_marker(out, err)
@@ -182,6 +182,6 @@ def test_ssh_transport_error_hides_credential(capsys, keys):
 def test_ssh_unparseable_key_hides_credential(capsys, keys):
     bad = keys / "bad"
     bad.write_text(f"-----BEGIN OPENSSH PRIVATE KEY-----\n{MARKER}\n-----END OPENSSH PRIVATE KEY-----\n")
-    rc, out, err = run(capsys, "--ssh", "root@127.0.0.1:2222", "--key", str(bad), "--known-hosts", str(keys / "known_hosts"))
+    rc, out, err = run(capsys, "--ssh", "root@localhost:2222", "--key", str(bad), "--known-hosts", str(keys / "known_hosts"))
     assert rc == 3
     no_marker(out, err)
