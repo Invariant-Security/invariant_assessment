@@ -16,8 +16,8 @@ NOW = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
 def test_normalize_dedup_and_fields():
     f = vuln.normalize(SAMPLE)
     assert len(f) == 4  # 5 entries, one repeated (cve, package)
-    assert f[0] == {"cve": "CVE-2026-5773", "package": "curl", "installed_version": "7.88.1-10+deb12u14",
-                    "fixed_version": "7.88.1-10+deb12u15", "severity": "HIGH", "cvss_v3_score": 7.5}
+    assert f[0] == {"cve": "CVE-2026-5773", "package": "curl", "installed_version": "7.88-10+deb12u14",
+                    "fixed_version": "7.88-10+deb12u15", "severity": "HIGH", "cvss_v3_score": 7.5}
     assert f[1]["cvss_v3_score"] == 6.6  # no NVD entry: vendor score
     assert f[2]["fixed_version"] is None and f[2]["cvss_v3_score"] is None
     assert vuln.normalize({}) == [] and vuln.normalize({"Results": [{"Vulnerabilities": None}]}) == []
@@ -42,14 +42,14 @@ def _stub(monkeypatch, version_json=None, image_json=None, image_rc=0, version_r
 
 def version(days_old, java_days_old=1):
     ts = lambda d: (NOW - timedelta(days=d)).strftime("%Y-%m-%dT%H:%M:%S.123456789Z")
-    return {"Version": "0.76.1", "VulnerabilityDB": {"Version": 2, "UpdatedAt": ts(days_old)}, "JavaDB": {"Version": 1, "UpdatedAt": ts(java_days_old)}}
+    return {"Version": "0.76", "VulnerabilityDB": {"Version": 2, "UpdatedAt": ts(days_old)}, "JavaDB": {"Version": 1, "UpdatedAt": ts(java_days_old)}}
 
 
 def test_scan_counts_and_extras(monkeypatch):
     _stub(monkeypatch, version(2), SAMPLE)
     out = vuln.scan("img", None, "/c", NOW)
     assert (out["total_findings"], out["unique_cves"]) == (4, len({f["cve"] for f in out["findings"]}))
-    assert out["trivy_version"] == "0.76.1" and out["db_version"] == 2 and out["db_age_warning"] is None
+    assert out["trivy_version"] == "0.76" and out["db_version"] == 2 and out["db_age_warning"] is None
     assert out["image_ref"] == {"ref": "img", "kind": "name"}
 
 
@@ -75,8 +75,8 @@ def test_db_age_limits_configurable(monkeypatch):
 @pytest.mark.parametrize("kwargs", [
     {"version_json": version(8), "image_json": SAMPLE},  # 8 days
     {"version_json": version(1, 8), "image_json": SAMPLE},  # Java DB 8 days
-    {"version_json": {"Version": "0.76.1"}, "image_json": SAMPLE},  # no DB at all
-    {"version_json": {"Version": "0.76.1", "VulnerabilityDB": version(1)["VulnerabilityDB"]}, "image_json": SAMPLE},  # no Java DB
+    {"version_json": {"Version": "0.76"}, "image_json": SAMPLE},  # no DB at all
+    {"version_json": {"Version": "0.76", "VulnerabilityDB": version(1)["VulnerabilityDB"]}, "image_json": SAMPLE},  # no Java DB
     {"version_json": "not json", "image_json": SAMPLE},
     {"version_json": version(1), "image_json": "not json"},
     {"version_json": version(1), "image_json": "[]"},

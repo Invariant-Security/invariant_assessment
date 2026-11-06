@@ -10,8 +10,8 @@
     {
      "VulnerabilityID": "CVE-2026-5773",
      "PkgName": "curl",
-     "InstalledVersion": "7.88.1-10+deb12u14",
-     "FixedVersion": "7.88.1-10+deb12u15",
+     "InstalledVersion": "7.88-10+deb12u14",
+     "FixedVersion": "7.88-10+deb12u15",
      "Severity": "HIGH",
      "CVSS": {
       "julia": {
@@ -45,15 +45,15 @@
     {
      "VulnerabilityID": "TEMP-0841856-B18BAF",
      "PkgName": "bash",
-     "InstalledVersion": "5.2.15-2+b10",
+     "InstalledVersion": "5.2-15-2+b10",
      "Severity": "LOW",
      "Status": "affected"
     },
     {
      "VulnerabilityID": "CVE-2026-109518",
      "PkgName": "apt",
-     "InstalledVersion": "2.6.1",
-     "FixedVersion": "2.6.2",
+     "InstalledVersion": "2.6-1",
+     "FixedVersion": "2.6-2",
      "Severity": "HIGH",
      "Status": "fixed"
     }
@@ -67,8 +67,8 @@
     {
      "VulnerabilityID": "CVE-2026-5773",
      "PkgName": "curl",
-     "InstalledVersion": "7.88.1-10+deb12u14",
-     "FixedVersion": "7.88.1-10+deb12u15",
+     "InstalledVersion": "7.88-10+deb12u14",
+     "FixedVersion": "7.88-10+deb12u15",
      "Severity": "HIGH",
      "CVSS": {
       "julia": {
