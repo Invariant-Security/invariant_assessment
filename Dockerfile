@@ -23,11 +23,22 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends docker-cli \
     && rm -rf /var/lib/apt/lists/*
 
+# Trivy v0.76.1 (INV-81), binário do release oficial. O build falha se o SHA-256
+# do tarball não bater com o valor fixo abaixo (trivy_0.76.1_checksums.txt do
+# release). A base de vulnerabilidades (~1,6 GB) NÃO entra na imagem: monte um
+# volume em INVARIANT_TRIVY_CACHE (README, "Image vulnerabilities").
+ADD --checksum=sha256:c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0 \
+    https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz /tmp/trivy.tar.gz
+RUN mkdir -p /usr/share/doc/trivy \
+    && tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy \
+    && tar -xzf /tmp/trivy.tar.gz -C /usr/share/doc/trivy LICENSE \
+    && rm /tmp/trivy.tar.gz
+
 # Dependências antes do código: mudar README/src não reinstala nada.
 COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes --no-deps -r requirements.lock
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md NOTICE ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps . && pip check
 
