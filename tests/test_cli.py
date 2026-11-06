@@ -230,3 +230,22 @@ def test_ssh_unparseable_key_hides_credential(capsys, keys):
     rc, out, err = run(capsys, "--ssh", "root@localhost:2222", "--key", str(bad), "--known-hosts", str(keys / "known_hosts"))
     assert rc == 3
     no_marker(out, err)
+
+
+def _probe_with_readlink_output(msg):
+    """Runs the real probe script with `readlink` stubbed to fail with `msg` for every pid."""
+    from invariant_assessment.facts import _APPLICABILITY_CMD as c
+    stub = ('readlink() { case "$2" in /proc/self/exe) echo /usr/bin/readlink;; *) echo "' + msg + '"; return 1;; esac; }; ')
+    return subprocess.run(["/bin/sh", "-c", stub + c], capture_output=True, text=True).stdout
+
+
+def test_unknown_readlink_error_is_unknown_and_not_assessed():
+    out = _probe_with_readlink_output("readlink: /proc/1/exe: Input/output error")
+    assert "PROC unreadable" in out
+    f = facts(packages=("bash",), probe=out.replace("BIN sshd present", "BIN sshd absent").replace("BIN sudo present", "BIN sudo absent"))
+    assert cli.effective_status("FAIL", SSHD, f, "ssh") == "NOT_ASSESSED"
+
+
+def test_no_such_file_readlink_error_is_ignored():
+    out = _probe_with_readlink_output("readlink: /proc/2/exe: No such file or directory")
+    assert "PROC ok" in out and "PROC unreadable" not in out

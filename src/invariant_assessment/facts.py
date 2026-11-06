@@ -79,7 +79,9 @@ _INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while re
 # /proc/<pid>/exe) is looked at -- never cmdline nor environ -- and it is
 # reduced on the target to "sshd/sudo is running"; the executable list itself
 # never leaves the target. Any exe that is not readable (permission) makes the
-# whole signal "PROC unreadable" (unknown). Kernel threads / exited pids have no
+# whole signal "PROC unreadable" (unknown). Allowlist: an absolute path = read; "No such file or directory"
+# (kernel thread / exited pid, LC_ALL=C) = ignored; ANY other output = unreadable.
+# Kernel threads / exited pids have no
 # exe (ENOENT) and are ignored. "PROC ok" only if /proc works at all.
 _APPLICABILITY_CMD = (
     "for b in sshd sudo; do if command -v $b >/dev/null 2>&1; then echo \"BIN $b present\"; "
@@ -88,7 +90,7 @@ _APPLICABILITY_CMD = (
     "for d in /proc/[0-9]*; do e=$(readlink -v \"$d/exe\" 2>&1); "
     "case \"$e\" in /*) b=${e##*/}; b=${b% (deleted)}; "
     "case \"$b\" in sshd|sshd-session) echo 'RUNNING sshd';; sudo) echo 'RUNNING sudo';; esac;; "
-    "*ermission*|*not\\ permitted*) echo 'PROC unreadable';; esac; done; "
+    "*'No such file or directory'*) ;; *) echo 'PROC unreadable';; esac; done; "
     "else echo 'PROC unreadable'; fi"
 )
 
