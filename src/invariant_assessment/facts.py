@@ -75,6 +75,14 @@ _MARKER_STAT_PREFIX = "===STAT:"
 # entry as "home doesn't exist", it's not a collection error.
 _INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; [ -r "$h" ] && [ -x "$h" ] || { echo "$h: Permission denied"; continue; }; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
 
+_APPLICABILITY_CMD = (
+    "for b in sshd sudo; do if command -v $b >/dev/null 2>&1; then echo \"BIN $b present\"; "
+    "else echo \"BIN $b absent\"; fi; done; "
+    "if cat /proc/1/comm >/dev/null 2>&1; then echo 'PROC ok'; "
+    "for c in /proc/[0-9]*/comm; do cat \"$c\" 2>/dev/null; done | sed 's/^/PROCNAME /'; "
+    "else echo 'PROC unreadable'; fi"
+)
+
 # (SystemFacts attribute name, output marker, shell command). Read as plain
 # text -- each check does its own parsing/grepping over the raw content,
 # same as sshd_config was before it got a dedicated parser. A file that
@@ -95,6 +103,10 @@ _TEXT_BLOCKS = [
     ("hosts_allow_text", "===HOSTS_ALLOW===", "cat /etc/hosts.allow 2>&1"),
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
+    # Applicability signals (INV-40 CLI, `requires` sshd/sudo): binary on PATH and
+    # running processes. /proc/1/comm readable = the process list is visible
+    # (hidepid or a non-procfs /proc makes it unreadable -> signal unknown).
+    ("applicability_probe_text", "===APPLICABILITY===", _APPLICABILITY_CMD),
     # /etc/security/pwquality.conf.d/*.conf is read together with the base file
     # (the password-quality enforcement check): pwquality reads the base file then
     # the conf.d dir, later values winning, so concatenating both here (missing
@@ -545,6 +557,7 @@ class SystemFacts:
     audit_rules_sync_text: str = ""
     mounts_text: str = ""
     container_detection_text: str = ""
+    applicability_probe_text: str = ""
     # Raw `sshd -T` probe output, same slice of text parse_sshd_config()
     # already reduces to sshd_config -- kept here too because a parsed
     # empty dict is ambiguous (binary missing vs. permission error vs.
@@ -736,6 +749,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         audit_rules_sync_text=text_values["audit_rules_sync_text"],
         mounts_text=text_values["mounts_text"],
         container_detection_text=text_values["container_detection_text"],
+        applicability_probe_text=text_values["applicability_probe_text"],
     )
 
 
