@@ -75,11 +75,20 @@ _MARKER_STAT_PREFIX = "===STAT:"
 # entry as "home doesn't exist", it's not a collection error.
 _INTERACTIVE_USER_FILES_CMD = """awk -F: '{print $1, $6}' /etc/passwd | while read -r u h; do [ -n "$h" ] && [ -d "$h" ] || continue; [ -r "$h" ] && [ -x "$h" ] || { echo "$h: Permission denied"; continue; }; stat -Lc "HOME $u %U %G %a $h" "$h"; find "$h" -maxdepth 1 -type f -name '.*' 2>/dev/null | while read -r f; do stat -Lc "DOT $u %U %G %a $(basename "$f")" "$f"; done; done"""
 
+# Process signal (INV-40): only the executable of each process (readlink of
+# /proc/<pid>/exe) is looked at -- never cmdline nor environ -- and it is
+# reduced on the target to "sshd/sudo is running"; the executable list itself
+# never leaves the target. Any exe that is not readable (permission) makes the
+# whole signal "PROC unreadable" (unknown). Kernel threads / exited pids have no
+# exe (ENOENT) and are ignored. "PROC ok" only if /proc works at all.
 _APPLICABILITY_CMD = (
     "for b in sshd sudo; do if command -v $b >/dev/null 2>&1; then echo \"BIN $b present\"; "
     "else echo \"BIN $b absent\"; fi; done; "
-    "if cat /proc/1/comm >/dev/null 2>&1; then echo 'PROC ok'; "
-    "for c in /proc/[0-9]*/comm; do cat \"$c\" 2>/dev/null; done | sed 's/^/PROCNAME /'; "
+    "if readlink -v /proc/self/exe >/dev/null 2>&1; then echo 'PROC ok'; "
+    "for d in /proc/[0-9]*; do e=$(readlink -v \"$d/exe\" 2>&1); "
+    "case \"$e\" in /*) b=${e##*/}; b=${b% (deleted)}; "
+    "case \"$b\" in sshd|sshd-session) echo 'RUNNING sshd';; sudo) echo 'RUNNING sudo';; esac;; "
+    "*ermission*|*not\\ permitted*) echo 'PROC unreadable';; esac; done; "
     "else echo 'PROC unreadable'; fi"
 )
 
@@ -104,8 +113,7 @@ _TEXT_BLOCKS = [
     ("hosts_deny_text", "===HOSTS_DENY===", "cat /etc/hosts.deny 2>&1"),
     ("installed_packages_text", "===INSTALLED_PACKAGES===", "dpkg-query -W -f='${Package}\\n' 2>&1"),
     # Applicability signals (INV-40 CLI, `requires` sshd/sudo): binary on PATH and
-    # running processes. /proc/1/comm readable = the process list is visible
-    # (hidepid or a non-procfs /proc makes it unreadable -> signal unknown).
+    # running processes (see _APPLICABILITY_CMD).
     ("applicability_probe_text", "===APPLICABILITY===", _APPLICABILITY_CMD),
     # /etc/security/pwquality.conf.d/*.conf is read together with the base file
     # (the password-quality enforcement check): pwquality reads the base file then
