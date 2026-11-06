@@ -1,0 +1,1000 @@
+{
+  "checks": {
+    "accounts_without_shell_locked": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "aide_installed": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_conf_files_group_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_conf_files_mode": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_conf_files_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_config_immutable": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_disk_full_error_actions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_log_dir_mode": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_log_files_group_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_log_files_mode": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_log_files_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_log_storage_size": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_logs_not_auto_deleted": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_processes_prior_to_auditd": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_rules_running_matches_disk": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_space_left_actions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_tools_group_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_tools_mode": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "audit_tools_owner": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "auditd_enabled_active": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "auditd_packages_installed": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "autofs_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "avahi_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "bluetooth_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "bootloader_config_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "chrony_enabled_active": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "chrony_runs_as_chrony_user": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_d_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_daily_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_enabled_active": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_hourly_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_monthly_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cron_weekly_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "cups_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "default_umask": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "dhcp_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "dns_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "dnsmasq_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_crontab_permissions": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "etc_group_minus_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_group_permissions": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_gshadow_minus_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_gshadow_permissions": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_issue_net_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_issue_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_motd_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_passwd_minus_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_passwd_permissions": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_shadow_minus_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_shadow_permissions": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_shells_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "etc_ssh_sshd_config_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "faillock_deny": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "faillock_root_lockout": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "faillock_unlock_time": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "ftp_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "ftp_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "inactive_password_lock": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "interactive_user_dotfiles": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "interactive_user_home_dirs": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "journal_remote_not_in_use": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "journald_compress": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "journald_log_rotation": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "journald_storage": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_cramfs_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_dccp_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_freevxfs_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_hfs_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_hfsplus_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_jffs2_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_rds_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_sctp_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_squashfs_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_tipc_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_udf_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "kernel_module_usb_storage_not_available": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "last_password_change_in_past": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "ldap_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "ldap_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "login_defs_encrypt_method": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "logins_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mac_policy_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "message_access_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_dev_shm_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_dev_shm_noexec": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_dev_shm_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_dev_shm_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_home_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_home_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_home_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_tmp_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_tmp_noexec": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_tmp_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_tmp_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_var_log_audit_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_audit_noexec": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_audit_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_audit_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_var_log_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_noexec": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_log_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_var_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mount_var_tmp_nodev": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_tmp_noexec": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_tmp_nosuid": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "mount_var_tmp_separate": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "mounts_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "nfs_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "nis_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "nis_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "no_duplicate_gids": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "no_duplicate_group_names": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "no_duplicate_uids": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "no_unowned_files": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_faillock_enabled": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_no_nullok": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_pwhistory_enabled": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_pwhistory_use_authtok": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_pwquality_enabled": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_unix_enabled": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_unix_no_remember": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_unix_strong_password_hashing": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pam_unix_use_authtok": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "passwd_accounts_use_shadowed_passwords": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "passwd_groups_exist_in_group": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "password_expiration_configured": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "password_expiration_warning_configured": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "prelink_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwhistory_enforce_for_root": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwhistory_remember": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_complexity": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_dictcheck": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_difok": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_enforce_for_root": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_enforcing": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_max_repeat": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_max_sequence": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "pwquality_minlen": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "root_only_gid0_account": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "root_only_gid0_group": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "root_only_uid0_account": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "root_path_integrity": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "root_umask": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "rpcbind_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "rsh_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "rsync_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "samba_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "session_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "shadow_group_empty": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "shadow_password_fields_not_empty": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "shells_no_nologin": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "single_time_sync_daemon": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "snmp_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "ssh_allow_deny_configured": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_banner": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_ciphers": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_client_alive": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_disable_forwarding": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_gssapi_authentication": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_hostbased_authentication": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_ignore_rhosts": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_kex_algorithms": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_log_level": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_login_grace_time": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_macs": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_max_auth_tries": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_max_sessions": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_max_startups": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_permit_empty_passwords": {
+      "critical": true,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_permit_root_login": {
+      "critical": true,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_permit_user_environment": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_private_host_key_permissions": {
+      "critical": true,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_public_host_key_permissions": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "ssh_use_pam": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sshd"
+    },
+    "su_restricted": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "sudo_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "sudo_log_file_exists": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sudo"
+    },
+    "sudo_log_file_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": "sudo"
+    },
+    "sudo_no_nopasswd": {
+      "critical": true,
+      "host_only": false,
+      "requires": "sudo"
+    },
+    "sudo_reauthentication_required": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sudo"
+    },
+    "sudo_use_pty": {
+      "critical": false,
+      "host_only": false,
+      "requires": "sudo"
+    },
+    "system_accounts_no_valid_shell": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "talk_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "telnet_client_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "tftp_server_not_installed": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "time_change_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "timesyncd_authorized_timeserver": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "timesyncd_enabled_active": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "ufw_installed": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "unsuccessful_file_access_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "user_emulation_logged": {
+      "critical": false,
+      "host_only": true,
+      "requires": null
+    },
+    "web_proxy_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "web_server_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "world_writable_secured": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    },
+    "x_window_not_installed": {
+      "critical": false,
+      "host_only": false,
+      "requires": null
+    },
+    "xinetd_not_installed": {
+      "critical": true,
+      "host_only": false,
+      "requires": null
+    }
+  },
+  "schema": 1
+}

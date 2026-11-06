@@ -87,6 +87,30 @@ class DockerExecTransport:
         return result.stdout + result.stderr
 
 
+@dataclass
+class LocalTransport:
+    """Runs the (fixed, caller-independent) collection script on this host.
+    No shell=True: argv is ["/bin/sh", "-c", script], the same `sh -c <script>`
+    form DockerExecTransport hands to the container. `script` is always the
+    constant built by facts._collect_script() -- no user input is interpolated.
+    """
+
+    timeout: float = 10.0
+
+    def run(self, script: str) -> str:
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["/bin/sh", "-c", script], capture_output=True, text=True, timeout=self.timeout
+            )
+        except subprocess.TimeoutExpired as e:
+            raise TransportTimeoutError(f"local collection timed out after {self.timeout}s") from e
+        except OSError as e:
+            raise TransportUnreachableError("could not run /bin/sh") from e
+        return result.stdout + result.stderr
+
+
 def list_docker_containers() -> list[dict]:
     """Names+images+IDs+demo-label of every running container reachable
     by this host's Docker socket -- what DockerExecTransport's `target`

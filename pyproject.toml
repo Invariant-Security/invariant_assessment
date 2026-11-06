@@ -16,6 +16,9 @@ dependencies = [
 # dependency. Add it back only if a future endpoint here actually needs one
 # of those models.
 
+[project.scripts]
+invariant = "invariant_assessment.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pytest-timeout", "httpx2"]
 
