@@ -1,7 +1,9 @@
 """`invariant assess` -- the same engine as the HTTP service, from a terminal.
 
 Exit codes: 0 = the assessment ran (FAIL results included); 2 = usage error;
-3 = could not reach / read the target. 1 is reserved for the future
+3 = transport (unreachable, auth, host key, missing container); 4 = internal
+error (unsupported/undetected OS, bad catalog, unexpected exception; a short
+message, traceback only with INVARIANT_DEBUG=1). 1 is reserved for the future
 `invariant gate`: this command never returns it.
 """
 
@@ -12,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -41,9 +44,24 @@ class UsageError(Exception):
     pass
 
 
+class InternalError(Exception):
+    """Exit 4. The message is fixed text -- never data from the target."""
+
+
 def load_catalog() -> tuple[dict, str]:
-    raw = CATALOG_PATH.read_bytes()
-    return json.loads(raw)["checks"], hashlib.sha256(raw).hexdigest()
+    try:
+        raw = CATALOG_PATH.read_bytes()
+        data = json.loads(raw)
+        checks = data["checks"]
+        ok = data["schema"] == 1 and isinstance(checks, dict) and all(
+            isinstance(m, dict) and set(m) == {"critical", "host_only", "requires"}
+            and isinstance(m["critical"], bool) and isinstance(m["host_only"], bool)
+            and m["requires"] in (None, "sshd", "sudo") for m in checks.values())
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise InternalError(f"catalog.json missing or corrupt ({type(e).__name__})") from e
+    if not ok:
+        raise InternalError("catalog.json has an unexpected schema")
+    return checks, hashlib.sha256(raw).hexdigest()
 
 
 # --- effective_status ---------------------------------------------------------
@@ -60,8 +78,8 @@ def _requires_signals(facts: SystemFacts, name: str) -> list[str]:
     lines = [ln.strip() for ln in facts.applicability_probe_text.splitlines()]
     probe_ok = "applicability_probe_text" not in facts.unreadable
     binary = next((ln.split()[2] for ln in lines if probe_ok and ln.startswith(f"BIN {name} ")), "unknown")
-    if probe_ok and "PROC ok" in lines:
-        proc = "present" if any(ln.startswith(f"PROCNAME {name}") for ln in lines) else "absent"
+    if probe_ok and "PROC ok" in lines and "PROC unreadable" not in lines:
+        proc = "present" if f"RUNNING {name}" in lines else "absent"
     else:
         proc = "unknown"
     return [pkg, binary, proc]
@@ -178,13 +196,27 @@ def _validate(args) -> None:
         raise UsageError("--key, --known-hosts and --host-key-fingerprint only apply to --ssh")
 
 
+def _warn_if_unprivileged(args) -> None:
+    if (args.local and os.geteuid() != 0) or (args.ssh and _parse_ssh(args.ssh)[0] != "root"):
+        print("invariant: warning: not running as root. A complete assessment needs root (or CAP_SYS_PTRACE "
+              "to read process executables); checks with `requires` (sshd/sudo) may come out NOT_ASSESSED, "
+              "and the gate fails closed on that.", file=sys.stderr)
+
+
 def assess(args) -> dict:
     from fastapi import HTTPException
 
     from invariant_assessment.api import _evaluate_all
-    from invariant_assessment.facts import collect_facts
+    from invariant_assessment.facts import collect_facts as _collect_facts
+
+    def collect_facts(transport):
+        try:
+            return _collect_facts(transport)
+        except LookupError as e:  # the collection script did not run (no shell, container missing/stopped)
+            raise TransportUnreachableError("could not collect facts from the target (no shell, not running or not found)") from e
 
     _validate(args)
+    _warn_if_unprivileged(args)
     catalog, catalog_version = load_catalog()
     started = datetime.now(timezone.utc)
     extra: dict = {}
@@ -203,7 +235,7 @@ def assess(args) -> dict:
     try:
         resp = _evaluate_all(facts, target, host_key).model_dump(mode="json")
     except HTTPException as e:
-        raise TransportError(str(e.detail)) from e
+        raise InternalError("target OS not detected or not supported") from e
     for r in resp["results"]:
         r["effective_status"] = effective_status(r["status"], catalog.get(r["check_id"]), facts, kind)
     run_id = next((os.environ[v] for v in ("INVARIANT_RUN_ID", "BUILD_URL", "GITHUB_RUN_ID") if os.environ.get(v)), None)
@@ -256,12 +288,12 @@ def main(argv: list[str] | None = None) -> int:
     except (TransportUnreachableError, TransportTimeoutError, TransportError) as e:
         print(f"invariant: transport error: {e}", file=sys.stderr)
         return 3
-    except LookupError:
-        print("invariant: could not collect facts from the target (no shell, not running or not found)", file=sys.stderr)
-        return 3
-    except Exception as e:  # never leak 1 (reserved for the gate) nor a traceback with locals
-        print(f"invariant: unexpected error ({type(e).__name__})", file=sys.stderr)
-        return 3
+    except Exception as e:  # never leak 1 (reserved for the gate)
+        kind = "internal error" if isinstance(e, InternalError) else "unexpected error"
+        print(f"invariant: {kind}: {e if isinstance(e, InternalError) else type(e).__name__}", file=sys.stderr)
+        if os.environ.get("INVARIANT_DEBUG") == "1":
+            traceback.print_exc()
+        return 4
     print(json.dumps(out, indent=2) if args.format == "json" else render_table(out))
     return 0
 
