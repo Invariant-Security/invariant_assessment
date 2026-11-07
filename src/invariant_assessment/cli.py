@@ -188,6 +188,7 @@ def _build_parser() -> argparse.ArgumentParser:
     t.add_argument("--local", action="store_true")
     g.add_argument("--exceptions", metavar="PATH", help="default: ./.invariant-exceptions.yaml if it exists")
     g.add_argument("--format", choices=("json", "table", "junit"), default="table", help="junit: only the XML on stdout (Jenkins)")
+    g.add_argument("--out-dir", metavar="DIR", help="also write invariant-gate.{json,junit.xml,md,jenkins.md} to DIR")
     g.set_defaults(key=None, known_hosts=None, host_key_fingerprint=None)
     return p
 
@@ -282,35 +283,52 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as e:  # argparse already exits 2 on usage errors
         return int(e.code or 0)
-    from invariant_assessment import gate
+    from invariant_assessment import gate, gate_report
     from invariant_assessment.vuln import VulnError
+
+    out_dir = None
+    if args.command == "gate" and args.out_dir:
+        try:
+            out_dir = gate_report.check_out_dir(args.out_dir)
+        except UsageError as e:
+            print(f"invariant: usage error: {e}", file=sys.stderr)
+            return 2
+
+    def fail(code: int, msg: str) -> int:
+        print(f"invariant: {msg}", file=sys.stderr)
+        if out_dir:  # fail closed: all four files say "error", an older pass never survives
+            try:
+                gate_report.write_error_files(out_dir, code, msg)
+            except OSError as e:
+                print(f"invariant: could not write --out-dir files ({e.strerror})", file=sys.stderr)
+        return code
 
     try:
         out = gate.gate(args) if args.command == "gate" else assess(args)
     except UsageError as e:
-        print(f"invariant: usage error: {e}", file=sys.stderr)
-        return 2
+        return fail(2, f"usage error: {e}")
     except HostKeyMismatch as e:
-        print(f"invariant: host key mismatch (server presented {e.key_type} {e.fingerprint})", file=sys.stderr)
-        return 3
+        return fail(3, f"host key mismatch (server presented {e.key_type} {e.fingerprint})")
     except TransportAuthError:
-        print("invariant: authentication failed", file=sys.stderr)
-        return 3
+        return fail(3, "authentication failed")
     except (TransportUnreachableError, TransportTimeoutError, TransportError) as e:
-        print(f"invariant: transport error: {e}", file=sys.stderr)
-        return 3
+        return fail(3, f"transport error: {e}")
     except Exception as e:  # `assess` never returns 1; the gate returns it only on a decision
         known = isinstance(e, (InternalError, VulnError))
-        print(f"invariant: {'internal error' if known else 'unexpected error'}: {e if known else type(e).__name__}",
-              file=sys.stderr)
         if os.environ.get("INVARIANT_DEBUG") == "1":
             traceback.print_exc()
-        return 4
+        return fail(4, f"{'internal error' if known else 'unexpected error'}: {e if known else type(e).__name__}")
     if args.command == "gate":
         for w in out["warnings"]:
             print(f"invariant: warning: {w}", file=sys.stderr)
+        catalog = gate.load_catalog()[0]
         print(json.dumps(out, indent=2) if args.format == "json"
-              else gate.render_junit(out, gate.load_catalog()[0]) if args.format == "junit" else gate.render_table(out))
+              else gate.render_junit(out, catalog) if args.format == "junit" else gate.render_table(out))
+        if out_dir:
+            try:
+                gate.write_reports(out_dir, out, catalog)
+            except OSError as e:
+                return fail(4, f"internal error: could not write --out-dir files ({e.strerror})")
         return 1 if out["decision"] == "block" else 0
     print(json.dumps(out, indent=2) if args.format == "json" else render_table(out))
     return 0

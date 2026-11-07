@@ -117,3 +117,75 @@ def explain_cve(cve: str, fs: list[dict], target: str) -> dict:
                     "loads the vulnerable code" + ("." if not unknown else " (cannot be ruled out here).")),
         "fix": fix + "Otherwise record an exception with justification, owner and expiry.",
     }
+
+
+# --- INV-105: plain-language title/action (reasons[].title / .action) and phrases for context codes ---
+
+# check_id -> (title, action). Written for this project, no benchmark wording.
+CHECK_PLAIN = {
+    "etc_group_permissions": ("The group list file can be changed by other users",
+                              "Make the file owned by root and not writable by others, and fix the build step that changed it."),
+    "etc_gshadow_permissions": ("The group password file is open to ordinary users",
+                                "Make the file owned by root and unreadable by ordinary users, and fix the build step that opened it."),
+    "etc_passwd_permissions": ("The user account list can be changed by other users",
+                               "Make the file owned by root and not writable by others, and fix the build step that changed it."),
+    "etc_shadow_permissions": ("Password hashes can be read by ordinary users",
+                               "Make the file owned by root and unreadable by ordinary users, and fix the build step that opened it."),
+    "passwd_accounts_use_shadowed_passwords": ("Some accounts keep their password hash in a file everyone can read",
+                                               "Move those hashes to the protected password file, or lock the accounts."),
+    "root_only_uid0_account": ("More than one account has full administrator powers",
+                               "Remove the extra accounts, or give them a normal user number."),
+    "root_path_integrity": ("The administrator's command search path includes an unsafe folder",
+                            "Remove empty, relative and writable folders from that path."),
+    "shadow_password_fields_not_empty": ("An account has no password",
+                                         "Set a strong password on the account, lock it, or remove it."),
+    "ssh_permit_empty_passwords": ("The SSH server accepts logins without a password",
+                                   "Turn off empty passwords in the SSH server settings and reload it."),
+    "ssh_permit_root_login": ("The SSH server lets people log in directly as administrator",
+                              "Turn off direct administrator login in the SSH server settings, reload it and use a named account instead."),
+    "ssh_private_host_key_permissions": ("The SSH server's private keys are open to other users",
+                                         "Make the keys readable only by root, and regenerate them if someone may have read them."),
+    "sudo_no_nopasswd": ("Some accounts can run administrator commands without a password",
+                         "Remove those rules, or limit them to specific commands that cannot open a shell."),
+    "tftp_server_not_installed": ("A file-transfer server with no login is installed",
+                                  "Remove the package."),
+    "world_writable_secured": ("Shared writable folders let users delete each other's files",
+                               "Turn on the sticky bit on those folders, or remove write access for everyone."),
+    "xinetd_not_installed": ("An old network service launcher is installed",
+                             "Remove the package and run any needed service on its own."),
+}
+
+_NA_ACTION = ("Run the gate with enough privilege inside the target, and with a working connection to it, so the check can run; "
+              "or record an exception with an owner and an expiry date.")
+_NO_FIX = ("No fixed version exists: remove the package or turn off the service that uses it; "
+           "or record an exception with an owner and an expiry date.")
+
+# context_reason -> sentence for humans (JSON and JUnit keep the code)
+CONTEXT_PHRASE = {
+    "listener_maps_package": "a process listening on the network loads this library",
+    "not_executable": "headers or docs only, nothing runs",
+    "interpreted_code": "contains scripts, exposure can't be ruled out",
+    "not_in_dpkg": "not managed by the OS package manager, could not be checked",
+    "no_dpkg": "the OS package list could not be read, could not be checked",
+    "not_loaded_by_listener": "installed, but no network-facing process loads it",
+    "unreadable": "process data could not be read",
+}
+
+
+def phrase(code) -> str:
+    return CONTEXT_PHRASE.get(code, "not classified")
+
+
+def plain_check(cid: str, state: str) -> tuple[str, str]:
+    title, action = CHECK_PLAIN.get(cid, (f"Critical check {cid} failed", "Correct the setting the check reports."))
+    if state == "NOT_ASSESSED":
+        return f"Could not verify: {title[0].lower()}{title[1:]}", _NA_ACTION
+    return title, action
+
+
+def plain_cve(cve: str, fs: list[dict], state: str) -> tuple[str, str]:
+    pk = ", ".join(sorted({f["package"] for f in fs}))
+    what = "reachable from the network" if state == "exposed" else "exposure can't be ruled out"
+    fixed = sorted({f["fixed_version"] for f in fs if f.get("fixed_version")})
+    action = f"Update {pk} to {', '.join(fixed)} and rebuild the image." if fixed else _NO_FIX
+    return f"{cve} in {pk}: actively exploited, {what}", action

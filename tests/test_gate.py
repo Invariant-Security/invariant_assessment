@@ -163,7 +163,7 @@ def test_pass_and_block_exit_codes_and_outputs(capsys, wired):
     assert rc == 1 and d["decision"] == "block" and ids(d["reasons"]) == [("check", "crit")]
     assert d["findings"] and d["results"] and d["unique_cves_in_kev"] == 1
     rc, out, _ = run(capsys, "--docker", "c")
-    assert rc == 1 and out.startswith("DECISION: BLOCK") and "CVE-2026-1111" in out  # KEV listed though not blocking
+    assert rc == 1 and out.startswith("❌ Deploy blocked: 1 problem") and "DECISION: BLOCK" in out and "CVE-2026-1111" in out  # KEV listed though not blocking
 
 
 def test_exception_file_turns_block_into_pass_and_is_reported(capsys, wired, tmp_path):
@@ -352,3 +352,183 @@ def test_junit_transport_error_prints_no_xml(capsys, wired, monkeypatch):
     monkeypatch.setattr(cli, "assess", boom)
     rc, out, _ = run(capsys, "--docker", "c", "--format", "junit")
     assert rc == 3 and out == ""
+
+
+# --- INV-105 readable output ---------------------------------------------------------------
+
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+OUT_NAMES = {"invariant-gate.json", "invariant-gate.junit.xml", "invariant-gate.md", "invariant-gate.jenkins.md"}
+
+
+def kf(cve, pkg, exposure, reason, kev=True, **kw):
+    return {**fnd(cve, pkg, exposure, kev=kev, reason=reason), "installed_version": "1.0", "severity": "HIGH", "cvss_v3_score": 8.1,
+            "kev_date_added": "2026-01-02", "kev_known_ransomware_campaign_use": "Unknown", "fixed_version": None, **kw}
+
+
+def md_run(capsys, tmp_path, *extra):
+    rc, out, err = run(capsys, "--docker", "c", "--out-dir", str(Path(str(tmp_path) + "-out")), *extra)
+    return rc, out, err, Path(str(tmp_path) + "-out")
+
+
+def test_out_dir_writes_four_files_overwrites_and_keeps_exit_code(capsys, wired, tmp_path):
+    wired["results"] = [res("crit", "FAIL")]
+    rc, out, _, d = md_run(capsys, tmp_path)
+    assert rc == 1 and {p.name for p in d.iterdir()} == OUT_NAMES  # created the missing dir, no tmp left over
+    assert out.startswith("❌ Deploy blocked: 1 problem")  # stdout keeps the table
+    assert json.loads((d / "invariant-gate.json").read_text())["decision"] == "block"
+    assert ET.fromstring((d / "invariant-gate.junit.xml").read_text()).find("testsuite") is not None
+    wired["results"] = [res("crit", "PASS")]
+    rc, _, _, d = md_run(capsys, tmp_path)
+    assert rc == 0 and (d / "invariant-gate.md").read_text().startswith("✅ Deploy allowed")
+
+
+def test_markdown_sections_in_order_and_contrast_numbers(capsys, wired, tmp_path):
+    wired["results"] = [res("crit", "FAIL")]
+    wired["findings"] = [
+        kf("CVE-2026-0001", "blocker", "exposed", "listener_maps_package", fixed_version="2.0"),
+        kf("CVE-2026-0002", "docs", "not_exposed", "not_executable"),
+        kf("CVE-2026-0003", "nolist", "unknown", "not_in_dpkg", kev=False),
+        kf("CVE-2026-0004", "scr", "unknown", "interpreted_code", kev=False),
+        kf("CVE-2026-0005", "net", "exposed", "listener_maps_package", kev=False),
+    ]
+    rc, _, _, d = md_run(capsys, tmp_path)
+    t = (d / "invariant-gate.md").read_text()
+    assert t.startswith("❌ Deploy blocked: 2 problems\n")
+    marks = ["Trivy reported", "### 1.", "<details>", "### 2.", "## Visible, not blocking", "## Other findings", "## Assumptions"]
+    pos = [t.index(m) for m in marks]
+    assert pos == sorted(pos)
+    assert "Invariant blocks on 1. Plus 1 configuration issue Trivy doesn't check." in t
+    assert "headers or docs only, nothing runs" in t.split("## Visible")[1]
+    assert "1 finding in language packages could not be checked; not blocking, none are actively exploited" in t
+    assert "1 finding could not be ruled out (scripts); not blocking, none are actively exploited" in t
+    assert "2 findings in network-facing code, 1 actively exploited CVE listed above, the rest are not blocking" in t
+    assert "Update blocker to 2.0 and rebuild the image." in t and "reachable from the network" in t
+    assert "listener_maps_package" not in t and "not_in_dpkg" not in t  # codes become sentences
+    j = (d / "invariant-gate.jenkins.md").read_text()
+    assert "<" not in j.replace("\\<", "") and "details" not in j and "- Technical detail\n  - " in j
+    assert "listener_maps_package" in (d / "invariant-gate.junit.xml").read_text() and "listener_maps_package" in (d / "invariant-gate.json").read_text()
+
+
+def test_contrast_uses_real_counts_with_thousands_separator():
+    out = {"decision": "block", "reasons": [{"type": "check"}] * 3, "total_findings": 9848, "unique_cves": 6403}
+    from invariant_assessment import gate_report
+    assert gate_report.contrast(out) == ("Trivy reported 9,848 findings (6,403 unique CVEs) → Invariant blocks on 0. "
+                                         "Plus 3 configuration issues Trivy doesn't check.")
+
+
+def test_titles_and_actions_per_state():
+    base = {"installed_version": "1", "severity": "H", "cvss_v3_score": 9, "kev_date_added": "d"}
+    (a, b), _ = gate.decide(OK, [{**fnd("CVE-2026-1", "p", "exposed"), **base, "fixed_version": "1.5"},
+                                 {**fnd("CVE-2026-2", "q", "unknown"), **base, "fixed_version": None}], CAT, [])
+    assert "reachable from the network" in a["title"] and "Update p to 1.5 and rebuild" in a["action"]
+    assert "exposure can't be ruled out" in b["title"] and "reachable" not in b["title"]
+    assert "remove the package or turn off the service" in b["action"] and "owner and an expiry date" in b["action"]
+    (c,), _ = gate.decide([res("crit", "NOT_ASSESSED")], [], CAT, [])
+    (m,), _ = gate.decide([], [], CAT, [])
+    assert c["title"].startswith("Could not verify") and m["title"].startswith("Could not verify") and c["action"] and m["action"]
+    for cid in CRITICAL:
+        (r,), _ = gate.decide([res(cid, "FAIL")], [], {cid: {"critical": True}}, [])
+        assert r["title"].strip() and r["action"].strip() and r["title"] != f"Critical check {cid} failed"
+
+
+def test_cap_of_20_reasons_then_and_n_more(capsys, wired, tmp_path):
+    wired["findings"] = [kf(f"CVE-2026-{i:04d}", f"p{i}", "exposed", "listener_maps_package") for i in range(23)]
+    rc, out, _, d = md_run(capsys, tmp_path)
+    t = (d / "invariant-gate.md").read_text()
+    assert t.startswith("❌ Deploy blocked: 23 problems") and t.count("### ") == 20 and "…and 3 more" in t and "…and 3 more" in out
+
+
+def test_kev_class_line_says_those_block(capsys, wired, tmp_path):
+    wired["findings"] = [kf("CVE-2026-0001", "a", "unknown", "interpreted_code"), kf("CVE-2026-0002", "b", "unknown", "interpreted_code", kev=False)]
+    _, _, _, d = md_run(capsys, tmp_path)
+    assert "2 findings could not be ruled out (scripts); 1 actively exploited CVE listed above, the rest are not blocking" in (d / "invariant-gate.md").read_text()
+
+
+def test_table_starts_with_headline_contrast_and_actions_and_has_no_codes(capsys, wired):
+    wired["findings"] = [kf("CVE-2026-0001", "a", "exposed", "listener_maps_package")]
+    rc, out, _ = run(capsys, "--docker", "c")
+    lines = out.splitlines()
+    assert lines[0] == "❌ Deploy blocked: 1 problem" and lines[1].startswith("Trivy reported") and "Action:" in lines[4]
+    assert "listener_maps_package" not in out and "a process listening on the network loads this library" in out
+
+
+@pytest.mark.parametrize("argv,code", [(["--ssh", "u@h"], 2), (["--local"], 2)])
+def test_error_with_out_dir_writes_blocked_md_only(capsys, wired, tmp_path, argv, code):
+    d = Path(str(tmp_path) + "-out")
+    rc, out, err = run(capsys, *argv, "--out-dir", str(d))
+    assert rc == code and out == ""
+    assert {p.name for p in d.iterdir()} == OUT_NAMES
+    for n in (d / "invariant-gate.md", d / "invariant-gate.jenkins.md"):
+        t = n.read_text()
+        assert t.startswith("⛔ Gate could not run (pipeline error): deploy blocked") and "usage error" in t
+
+
+def test_transport_error_with_out_dir(capsys, wired, tmp_path, monkeypatch):
+    def boom(a):
+        raise cli.TransportUnreachableError("no container")
+    monkeypatch.setattr(cli, "assess", boom)
+    rc, out, _, d = md_run(capsys, tmp_path)
+    assert rc == 3 and out == ""
+    assert "no container" in (d / "invariant-gate.md").read_text()
+
+
+@pytest.mark.parametrize("sub", ["", "sub/dir"])
+def test_out_dir_inside_cache_is_refused(capsys, wired, tmp_path, sub):
+    cache = os.environ[vuln.CACHE_ENV]
+    rc, out, err = run(capsys, "--docker", "c", "--out-dir", os.path.join(cache, sub))
+    assert rc == 2 and out == "" and "cache" in err and os.listdir(cache) == []
+
+
+def test_write_is_atomic(tmp_path, monkeypatch):
+    from invariant_assessment import gate_report
+    f = tmp_path / "invariant-gate.md"
+    f.write_text("old")
+    monkeypatch.setattr(os, "replace", lambda *a: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        gate_report.write_atomic(f, "new")
+    assert f.read_text() == "old" and [p.name for p in tmp_path.iterdir()] == ["invariant-gate.md"]
+    monkeypatch.undo()
+    gate_report.write_atomic(f, "new")
+    assert f.read_text() == "new" and len(list(tmp_path.iterdir())) == 1
+
+
+EVIL = "x<script>alert(1)</script>|a](javascript:alert(1))\x1b[31mred\x1b[0m\nINJECT *b* _c_ `d`\x07"
+
+
+def test_injection_in_package_and_evidence_is_neutralised_in_all_outputs(capsys, wired, tmp_path):
+    wired["results"] = [{**res("crit", "FAIL"), "evidence": EVIL}]
+    wired["findings"] = [kf("CVE-2026-0001", EVIL, "exposed", "listener_maps_package", installed_version=EVIL)]
+    rc, table, _, d = md_run(capsys, tmp_path)
+    assert rc == 1
+    for name in ("invariant-gate.md", "invariant-gate.jenkins.md"):
+        t = (d / name).read_text()
+        assert "<script>" not in t and "\x1b" not in t and "\x07" not in t
+        assert "\\<script\\>" in t and "\\](javascript:" in t and t.count("](javascript:") == t.count("\\](javascript:")
+        assert "\nINJECT" not in t  # the line break did not start a new line
+        assert "\\*b\\*" in t and "\\_c\\_" in t and "\\`d\\`" in t and "\\|" in t
+    assert "\x1b" not in table and "\x07" not in table and "\nINJECT" not in table
+    xml = (d / "invariant-gate.junit.xml").read_text()
+    assert "<script>" not in xml and "&lt;script&gt;" in xml
+    ET.fromstring(xml)  # still well-formed with control characters in the data
+
+
+def test_unclassified_context_code_never_reaches_human_files(capsys, wired, tmp_path):
+    wired["results"] = [res("crit", "FAIL")]
+    wired["findings"] = [kf("CVE-2026-0001", "p", "exposed", f"/opt/{MARKER}/lib.so")]
+    rc, out, err, d = md_run(capsys, tmp_path)
+    assert rc == 1 and MARKER not in out + err + "".join((d / n).read_text() for n in ("invariant-gate.md", "invariant-gate.jenkins.md"))
+
+
+def test_error_after_success_in_same_dir_overwrites_all_four(capsys, wired, tmp_path, monkeypatch):
+    rc, _, _, d = md_run(capsys, tmp_path)
+    assert rc == 0 and "pass" in (d / "invariant-gate.json").read_text()
+    monkeypatch.setattr(cli, "assess", lambda a: (_ for _ in ()).throw(RuntimeError("boom")))
+    rc, _, _, d = md_run(capsys, tmp_path)
+    assert rc == 4
+    assert json.loads((d / "invariant-gate.json").read_text()) == {"decision": "error", "exit_code": 4, "error": "unexpected error: RuntimeError"}
+    (tc,) = ET.parse(d / "invariant-gate.junit.xml").getroot().iter("testcase")
+    assert (tc.get("classname"), tc.get("name")) == ("invariant.gate", "gate") and tc.find("error").get("message") and tc.find("failure") is None
+    for n in ("invariant-gate.md", "invariant-gate.jenkins.md"):
+        assert (d / n).read_text().startswith("⛔ Gate could not run")
