@@ -147,7 +147,7 @@ container) with the embedded Trivy. Development entry point only: there is no
 Offline, one preparation step (the only one with network access), then read-only scans:
 
 - `python -m invariant_assessment.prepare` stores in `$INVARIANT_TRIVY_CACHE` (same volume as
-  the Trivy DB) the Trivy DB and Java DB, plus `feeds/` with the CISA KEV JSON, the FIRST EPSS
+  the Trivy DB) the Trivy DB and Java DB, plus `feeds/` with the CISA KEV JSON (from the official mirror `github.com/cisagov/kev-data`, CC0 1.0), the FIRST EPSS
   CSV and `feeds/manifest.json` (per file `fetched_at` UTC and `sha256`; KEV `catalogVersion`;
   EPSS `score_date`). Atomic writes; on a download failure it exits 4 and keeps what was there.
 - `python -m invariant_assessment.enrich <image> | --docker <container>` runs the `vuln` scan

@@ -18,6 +18,8 @@ Vulnerability data used by `invariant_assessment.enrich` (downloaded by the oper
 -----------------------------------------------------------------------------------------------------
 CISA Known Exploited Vulnerabilities (KEV) Catalog, Cybersecurity and Infrastructure Security Agency.
   https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+  The KEV is CC0 1.0 and is downloaded from the official CISA mirror cisagov/kev-data:
+  https://github.com/cisagov/kev-data
 
 EPSS (Exploit Prediction Scoring System), FIRST (Forum of Incident Response and Security Teams).
   https://www.first.org/epss/  (scores published daily, free of charge, no registration)

@@ -133,3 +133,8 @@ def test_prepare_roundtrip_and_failure_preserves(tmp_path, server):
 def test_prepare_main_exit_4_on_download_failure(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(prepare, "KEV_URL", "http://localhost:9/x")
     assert prepare.main(["--cache-dir", str(tmp_path), "--feeds-only"]) == 4
+
+
+def test_prepare_default_kev_url_is_cisa_github_mirror():
+    assert prepare.KEV_URL == ("https://raw.githubusercontent.com/cisagov/kev-data/develop/"
+                               "known_exploited_vulnerabilities.json")

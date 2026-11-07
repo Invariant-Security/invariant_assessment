@@ -20,7 +20,8 @@ from pathlib import Path
 from invariant_assessment import enrich as E
 from invariant_assessment.vuln import CACHE_ENV, VulnError, _run
 
-KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+# official CISA mirror (cisagov/kev-data, CC0 1.0), default branch
+KEV_URL = "https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json"
 EPSS_URL = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz"  # linked from first.org/epss/data
 MAX_BYTES = 200 * 1024 * 1024
 
