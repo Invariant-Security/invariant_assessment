@@ -7,7 +7,8 @@ Runs the INV-81 scan (vuln.py) and tags each finding with `exposure` and `contex
                v4/v6 count; the v4 loopback range, ::1 and v4-mapped loopback do not).
   not_exposed  the package is installed but no such process exists, or it has nothing
                executable (headers only).
-  unknown      anything we could not prove: no dpkg, package not in dpkg (language
+  unknown      anything we could not prove: the package has interpreted code (.py .pm .rb .js
+               .php .sh, or an executable starting with `#!`; interpreted_code), no dpkg, package not in dpkg (language
                packages), version differs from Trivy's, or a /proc read failed.
                A failed read never turns into not_exposed.
 
@@ -31,13 +32,16 @@ from invariant_assessment.transport import DockerExecTransport, TransportError
 
 _PKG_RE = re.compile(r"^[a-z0-9][a-z0-9+.\-]*$")
 _LISTEN_STATE = {"tcp": "0A", "tcp6": "0A", "udp": "07", "udp6": "07"}
-# ponytail: one `dpkg -L` loop per scan; builtins only, forks just for readlink of candidates.
+# ponytail: one `dpkg -L` loop per scan; forks only for candidates (readlink, head -c 2 for `#!`). "I <pkg>" = package
+# ships interpreted code (.py .pm .rb .js .php .sh, or an executable starting with `#!`); sort -u keeps one mark.
 _PKG_CMD = (
     'export LC_ALL=C; exec 2>&1; command -v dpkg >/dev/null 2>&1 || { echo "DPKG absent"; exit 0; }; echo "DPKG ok"; '
     'for p in @PKGS@; do v=$(dpkg-query -W -f=\'${Version}\' "$p" 2>/dev/null) && l=$(dpkg -L "$p" 2>/dev/null) '
     '|| { echo "PKG $p nodpkg"; continue; }; echo "PKG $p ok $v"; '
-    'printf "%s\\n" "$l" | while IFS= read -r f; do case "$f" in *.so*) ;; *) [ -f "$f" ] && [ -x "$f" ] || continue;; esac; '
-    'echo "F $p $(readlink -f "$f")"; done; done'
+    'printf "%s\\n" "$l" | while IFS= read -r f; do case "$f" in '
+    '*.py|*.pm|*.rb|*.js|*.php|*.sh) [ -f "$f" ] && [ ! -L "$f" ] && echo "I $p"; continue;; *.so*) ;; '
+    '*) [ -f "$f" ] && [ -x "$f" ] || continue; [ "$(head -c 2 "$f" 2>/dev/null)" = "#!" ] && echo "I $p";; esac; '
+    'echo "F $p $(readlink -f "$f")"; done | sort -u; done'
 )
 
 
@@ -92,6 +96,8 @@ def parse_packages(text: str) -> dict | None:
             pkgs[parts[1]] = {"version": parts[3], "files": set()}
         elif parts[0] == "F" and len(parts) == 3 and parts[1] in pkgs:
             pkgs[parts[1]]["files"].add(parts[2])
+        elif parts[0] == "I" and len(parts) == 2 and parts[1] in pkgs:
+            pkgs[parts[1]]["interp"] = True
     return pkgs
 
 
@@ -106,10 +112,12 @@ def classify(finding: dict, probe: dict, pkgs: dict | None) -> tuple[str, str]:
     pkg = pkgs.get(finding["package"])
     if pkg is None or not _same_version(finding.get("installed_version"), pkg["version"]):
         return "unknown", "not_in_dpkg"
-    if not pkg["files"]:
-        return "not_exposed", "not_executable"
     if any(p["files"] & pkg["files"] and p["socks"] & probe["listen"] for p in probe["procs"]):
         return "exposed", "listener_maps_package"
+    if pkg.get("interp"):  # a script never shows in /proc/<pid>/maps (its interpreter does): cannot prove absence
+        return "unknown", "interpreted_code"
+    if not pkg["files"]:
+        return "not_exposed", "not_executable"
     if not probe["ok"]:
         return "unknown", "unreadable"
     return "not_exposed", "not_loaded_by_listener"
