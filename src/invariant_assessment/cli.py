@@ -187,7 +187,7 @@ def _build_parser() -> argparse.ArgumentParser:
     t.add_argument("--ssh", metavar="USER@HOST[:PORT]")
     t.add_argument("--local", action="store_true")
     g.add_argument("--exceptions", metavar="PATH", help="default: ./.invariant-exceptions.yaml if it exists")
-    g.add_argument("--format", choices=("json", "table"), default="table")
+    g.add_argument("--format", choices=("json", "table", "junit"), default="table", help="junit: only the XML on stdout (Jenkins)")
     g.set_defaults(key=None, known_hosts=None, host_key_fingerprint=None)
     return p
 
@@ -309,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "gate":
         for w in out["warnings"]:
             print(f"invariant: warning: {w}", file=sys.stderr)
-        print(json.dumps(out, indent=2) if args.format == "json" else gate.render_table(out))
+        print(json.dumps(out, indent=2) if args.format == "json"
+              else gate.render_junit(out, gate.load_catalog()[0]) if args.format == "junit" else gate.render_table(out))
         return 1 if out["decision"] == "block" else 0
     print(json.dumps(out, indent=2) if args.format == "json" else render_table(out))
     return 0

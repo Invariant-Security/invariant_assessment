@@ -74,13 +74,14 @@ invariant assess --local
 ## CLI: `invariant gate` (INV-84)
 
 ```bash
-INVARIANT_TRIVY_CACHE=/path/to/cache invariant gate --docker <container> [--exceptions PATH] [--format table|json]
+INVARIANT_TRIVY_CACHE=/path/to/cache invariant gate --docker <container> [--exceptions PATH] [--format table|json|junit]
 ```
 
 Runs `assess`, the Trivy scan, the KEV/EPSS feeds and the container context (all offline,
 cache read-only) and decides. Exit codes: 0 pass; 1 block; 2 usage (also `--ssh`/`--local`,
 not supported yet, and a malformed exceptions file); 3 transport; 4 internal error, unsupported
 OS, missing catalog, missing/old/corrupt Trivy DB or feeds. 2/3/4 never print a decision.
+`--format junit` prints only a JUnit XML on stdout (one testcase per critical check and per KEV CVE; redirect it for Jenkins' JUnit plugin); same exit codes.
 Feeds are checked before the scan; age warnings (3 days) go to stderr and `warnings` in the JSON.
 
 Blocks when: (a) a `critical` check of `catalog.json` has `effective_status` FAIL or
