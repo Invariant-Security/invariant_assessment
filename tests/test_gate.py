@@ -459,8 +459,8 @@ def test_error_with_out_dir_writes_blocked_md_only(capsys, wired, tmp_path, argv
     d = Path(str(tmp_path) + "-out")
     rc, out, err = run(capsys, *argv, "--out-dir", str(d))
     assert rc == code and out == ""
-    assert {p.name for p in d.iterdir()} == {"invariant-gate.md", "invariant-gate.jenkins.md"}
-    for n in d.iterdir():
+    assert {p.name for p in d.iterdir()} == OUT_NAMES
+    for n in (d / "invariant-gate.md", d / "invariant-gate.jenkins.md"):
         t = n.read_text()
         assert t.startswith("⛔ Gate could not run (pipeline error): deploy blocked") and "usage error" in t
 
@@ -470,7 +470,7 @@ def test_transport_error_with_out_dir(capsys, wired, tmp_path, monkeypatch):
         raise cli.TransportUnreachableError("no container")
     monkeypatch.setattr(cli, "assess", boom)
     rc, out, _, d = md_run(capsys, tmp_path)
-    assert rc == 3 and out == "" and not (d / "invariant-gate.junit.xml").exists()
+    assert rc == 3 and out == ""
     assert "no container" in (d / "invariant-gate.md").read_text()
 
 
@@ -519,3 +519,16 @@ def test_unclassified_context_code_never_reaches_human_files(capsys, wired, tmp_
     wired["findings"] = [kf("CVE-2026-0001", "p", "exposed", f"/opt/{MARKER}/lib.so")]
     rc, out, err, d = md_run(capsys, tmp_path)
     assert rc == 1 and MARKER not in out + err + "".join((d / n).read_text() for n in ("invariant-gate.md", "invariant-gate.jenkins.md"))
+
+
+def test_error_after_success_in_same_dir_overwrites_all_four(capsys, wired, tmp_path, monkeypatch):
+    rc, _, _, d = md_run(capsys, tmp_path)
+    assert rc == 0 and "pass" in (d / "invariant-gate.json").read_text()
+    monkeypatch.setattr(cli, "assess", lambda a: (_ for _ in ()).throw(RuntimeError("boom")))
+    rc, _, _, d = md_run(capsys, tmp_path)
+    assert rc == 4
+    assert json.loads((d / "invariant-gate.json").read_text()) == {"decision": "error", "exit_code": 4, "error": "unexpected error: RuntimeError"}
+    (tc,) = ET.parse(d / "invariant-gate.junit.xml").getroot().iter("testcase")
+    assert (tc.get("classname"), tc.get("name")) == ("invariant.gate", "gate") and tc.find("error").get("message") and tc.find("failure") is None
+    for n in ("invariant-gate.md", "invariant-gate.jenkins.md"):
+        assert (d / n).read_text().startswith("⛔ Gate could not run")

@@ -296,10 +296,9 @@ def main(argv: list[str] | None = None) -> int:
 
     def fail(code: int, msg: str) -> int:
         print(f"invariant: {msg}", file=sys.stderr)
-        if out_dir:  # the pipeline error is readable in the summary too; no JUnit/JSON of a pass is written
+        if out_dir:  # fail closed: all four files say "error", an older pass never survives
             try:
-                for name in ("invariant-gate.md", "invariant-gate.jenkins.md"):
-                    gate_report.write_atomic(out_dir / name, gate_report.error_markdown(msg))
+                gate_report.write_error_files(out_dir, code, msg)
             except OSError as e:
                 print(f"invariant: could not write --out-dir files ({e.strerror})", file=sys.stderr)
         return code

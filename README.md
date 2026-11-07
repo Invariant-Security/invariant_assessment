@@ -90,9 +90,9 @@ missing, the fixed names are overwritten, each file is written atomically, and a
 "Deploy blocked: N problems" or "Deploy allowed", then the contrast with Trivy's raw count, a title and one action per
 problem, the technical detail, the KEV CVEs that did not block, one line per class of findings, exceptions and
 assumptions (20 problems listed at most). Codes such as `listener_maps_package` become sentences in the Markdown and
-the terminal table (JSON and JUnit keep the codes); every field from the target is escaped. On exit 2/3/4 only the two
-`.md` files are written ("Gate could not run (pipeline error): deploy blocked"); stale JSON/JUnit from an earlier run in
-the same directory are not removed. See `examples/github-actions.yml`.
+the terminal table (JSON and JUnit keep the codes); every field from the target is escaped. On exit 2/3/4 (except a refused `--out-dir`, which writes nothing) all four files are overwritten with the error: JSON
+`{"decision": "error", ...}`, a JUnit with one `invariant.gate` testcase holding an `<error>`, and the two `.md`
+("Gate could not run (pipeline error): deploy blocked"), so an earlier result never looks current. See `examples/github-actions.yml`.
 Feeds are checked before the scan; age warnings (3 days) go to stderr and `warnings` in the JSON.
 
 Blocks when: (a) a `critical` check of `catalog.json` has `effective_status` FAIL or

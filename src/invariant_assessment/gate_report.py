@@ -5,6 +5,7 @@ Every field that comes from the target (evidence, package, version, ids) goes th
 Markdown punctuation is escaped. Nothing here reads process data, credentials or facts: only gate fields.
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -16,6 +17,7 @@ from invariant_assessment.gate_explain import phrase
 MAX_REASONS = 20
 _ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)")
 _CTL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _MD = re.compile(r"([\\`|<>\[\]*_])")
 
 
@@ -185,3 +187,16 @@ def write_atomic(path: Path, text: str) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def write_error_files(out_dir: Path, code: int, msg: str) -> None:
+    """Pipeline error: overwrite all four files so no earlier result looks current."""
+    from xml.sax.saxutils import quoteattr
+
+    write_atomic(out_dir / "invariant-gate.json", json.dumps({"decision": "error", "exit_code": code, "error": clean(msg)}, indent=2))
+    xml = _XML_BAD.sub("", clean(msg))
+    write_atomic(out_dir / "invariant-gate.junit.xml",
+                 '<testsuites tests="1" failures="0" errors="1"><testsuite name="invariant-gate" tests="1" failures="0" errors="1">'
+                 f'<testcase classname="invariant.gate" name="gate"><error message={quoteattr(xml)}/></testcase></testsuite></testsuites>')
+    for name in ("invariant-gate.md", "invariant-gate.jenkins.md"):
+        write_atomic(out_dir / name, error_markdown(msg))
