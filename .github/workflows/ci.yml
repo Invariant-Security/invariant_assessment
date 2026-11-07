@@ -98,6 +98,8 @@ jobs:
 
       - name: Download vulnerability DB only (no Java DB)
         run: |
+          # cache restaurado vem somente leitura (salvo depois do chmod a-w): devolver a escrita para atualizar
+          [ -d "$INVARIANT_TRIVY_CACHE" ] && chmod -R u+w "$INVARIANT_TRIVY_CACHE"
           trivy image --download-db-only --cache-dir "$INVARIANT_TRIVY_CACHE"
           chmod -R a-w "$INVARIANT_TRIVY_CACHE"
 
