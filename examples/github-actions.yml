@@ -1,0 +1,30 @@
+# Example only: this file is NOT a workflow of this repo (it lives outside .github/workflows).
+# Copy it to the pipeline repo that builds the image you want to gate.
+#
+# The job needs (1) the offline Trivy/feeds cache, prepared beforehand and mounted read-only, and
+# (2) the Docker socket (the gate runs commands inside the container under test; the socket is
+# equivalent to root on the runner, so use a dedicated runner).
+name: deploy-gate
+on: [pull_request]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start the container under test
+        run: docker run -d --name app-under-test my-registry/app:candidate
+      - name: Invariant gate
+        env:
+          INVARIANT_TRIVY_CACHE: /opt/invariant/cache   # offline cache, read-only
+        run: |
+          rc=0
+          invariant gate --docker app-under-test --out-dir invariant-out || rc=$?
+          # the readable summary goes to the run page, even when the gate blocks or fails
+          cat invariant-out/invariant-gate.md >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: Publish the JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invariant-gate
+          path: invariant-out/

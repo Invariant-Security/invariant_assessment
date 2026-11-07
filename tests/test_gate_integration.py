@@ -47,3 +47,21 @@ def test_junit_format_real_labs():
         suite = ET.fromstring(r.stdout).find("testsuite")
         assert r.returncode == rc_want and int(suite.get("failures")) == len(fails)
         assert sorted(t.get("name") for t in suite.findall("testcase") if t.find("failure") is not None) == fails
+
+
+def test_out_dir_real_labs(tmp_path):
+    """INV-105: one run writes the four files; the Markdown is the readable verdict."""
+    import xml.etree.ElementTree as ET
+
+    for name, rc_want, head in (("poc-cd-exposed", 1, "❌ Deploy blocked: 2 problems"), ("poc-cd-idle", 0, "✅ Deploy allowed")):
+        d = tmp_path / name
+        r = subprocess.run([sys.executable, "-m", "invariant_assessment.cli", "gate", "--docker", name, "--out-dir", str(d)],
+                           capture_output=True, text=True, timeout=900)
+        assert r.returncode == rc_want and r.stdout.startswith(head)
+        assert {p.name for p in d.iterdir()} == {"invariant-gate.json", "invariant-gate.junit.xml", "invariant-gate.md", "invariant-gate.jenkins.md"}
+        assert (d / "invariant-gate.md").read_text().startswith(head) and "<" not in (d / "invariant-gate.jenkins.md").read_text()
+        assert json.loads((d / "invariant-gate.json").read_text())["decision"] == ("block" if rc_want else "pass")
+        ET.parse(d / "invariant-gate.junit.xml")
+        md = (d / "invariant-gate.md").read_text()
+        if rc_want:
+            assert md.count("**Action:**") == 2 and "listener_maps_package" not in md and "Visible, not blocking" in md

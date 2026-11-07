@@ -82,6 +82,17 @@ cache read-only) and decides. Exit codes: 0 pass; 1 block; 2 usage (also `--ssh`
 not supported yet, and a malformed exceptions file); 3 transport; 4 internal error, unsupported
 OS, missing catalog, missing/old/corrupt Trivy DB or feeds. 2/3/4 never print a decision.
 `--format junit` prints only a JUnit XML on stdout (one testcase per critical check and per KEV CVE; redirect it for Jenkins' JUnit plugin); same exit codes.
+`--out-dir DIR` also writes, from the same run: `invariant-gate.json`, `invariant-gate.junit.xml`,
+`invariant-gate.md` (GitHub: collapsible technical detail with `<details>`; append it to `$GITHUB_STEP_SUMMARY`) and
+`invariant-gate.jenkins.md` (same content, no HTML at all; detail as nested list items). The directory is created if
+missing, the fixed names are overwritten, each file is written atomically, and a directory equal to or inside
+`INVARIANT_TRIVY_CACHE` is refused (exit 2). stdout and exit codes do not change. The Markdown starts with
+"Deploy blocked: N problems" or "Deploy allowed", then the contrast with Trivy's raw count, a title and one action per
+problem, the technical detail, the KEV CVEs that did not block, one line per class of findings, exceptions and
+assumptions (20 problems listed at most). Codes such as `listener_maps_package` become sentences in the Markdown and
+the terminal table (JSON and JUnit keep the codes); every field from the target is escaped. On exit 2/3/4 only the two
+`.md` files are written ("Gate could not run (pipeline error): deploy blocked"); stale JSON/JUnit from an earlier run in
+the same directory are not removed. See `examples/github-actions.yml`.
 Feeds are checked before the scan; age warnings (3 days) go to stderr and `warnings` in the JSON.
 
 Blocks when: (a) a `critical` check of `catalog.json` has `effective_status` FAIL or

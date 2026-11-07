@@ -7,6 +7,7 @@ Exceptions come from `.invariant-exceptions.yaml`. Only --docker is supported fo
 All collection is reused (cli.assess, vuln.scan, enrich, context); nothing here reads the target.
 """
 
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -17,12 +18,15 @@ import yaml
 
 from invariant_assessment import context, enrich, gate_explain, vuln
 from invariant_assessment.cli import UsageError, load_catalog
+from invariant_assessment.gate_report import render_markdown, render_table, write_atomic  # noqa: F401
 
 EXCEPTIONS_FILE = ".invariant-exceptions.yaml"
 MAX_EXCEPTION_DAYS = 90
 _CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 _FIELDS = ("id", "justification", "owner", "expires")
 BLOCKING_EXPOSURE = ("exposed", "unknown")
+_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+OUT_FILES = ("invariant-gate.json", "invariant-gate.junit.xml", "invariant-gate.md", "invariant-gate.jenkins.md")
 
 
 def load_exceptions(path: str | None, today: date) -> list[dict]:
@@ -78,12 +82,14 @@ def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions:
         if catalog.get(r["check_id"], {}).get("critical") and r["effective_status"] in ("FAIL", "NOT_ASSESSED"):
             reasons.append({"type": "check", "id": r["check_id"], "packages": None, "state": r["effective_status"],
                             "reason": f"critical check {r['effective_status']}",
-                            "explanation": gate_explain.explain_check(r["check_id"], r["effective_status"], r, target)})
+                            "explanation": gate_explain.explain_check(r["check_id"], r["effective_status"], r, target),
+                            **dict(zip(("title", "action"), gate_explain.plain_check(r["check_id"], r["effective_status"])))})
     present = {r["check_id"] for r in results}
     for cid in sorted(c for c, m in catalog.items() if m.get("critical") and c not in present):  # fail closed
         reasons.append({"type": "check", "id": cid, "packages": None, "state": "NOT_ASSESSED",
                         "reason": "critical check missing from results",
-                        "explanation": gate_explain.explain_check(cid, "NOT_ASSESSED", None, target)})
+                        "explanation": gate_explain.explain_check(cid, "NOT_ASSESSED", None, target),
+                        **dict(zip(("title", "action"), gate_explain.plain_check(cid, "NOT_ASSESSED")))})
     by_cve: dict[str, list[dict]] = {}
     for f in findings:
         if f["in_kev"] and f["exposure"] in BLOCKING_EXPOSURE:
@@ -92,7 +98,8 @@ def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions:
         state = "exposed" if any(f["exposure"] == "exposed" for f in fs) else "unknown"
         reasons.append({"type": "cve", "id": cve, "packages": sorted({f["package"] for f in fs}), "state": state,
                         "reason": "CVE in CISA KEV; " + "; ".join(sorted({f"{f['package']}: {f['exposure']} ({f['context_reason']})" for f in fs})),
-                        "explanation": gate_explain.explain_cve(cve, fs, target)})
+                        "explanation": gate_explain.explain_cve(cve, fs, target),
+                        **dict(zip(("title", "action"), gate_explain.plain_cve(cve, fs, state)))})
     report, kept = [], []
     valid = [e for e in exceptions if e["status"] == "valid"]
     for rs in reasons:
@@ -151,26 +158,6 @@ def gate(args) -> dict:
     }
 
 
-def render_table(out: dict) -> str:
-    L = [f"DECISION: {out['decision'].upper()}  target: {out['target']}  image: {out['image_ref']['ref']}"]
-    for r in out["reasons"]:
-        pk = f" [{', '.join(r['packages'])}]" if r["packages"] else ""
-        L.append(f"  BLOCK {r['type']} {r['id']}{pk} {r['state']}: {r['reason']}")
-        L += [f"      {k}: {r['explanation'][key]}" for k, key in (("Where", "where"), ("Why", "why"), ("Exploit", "exploit"), ("Fix", "fix"))]
-    L += ["", "CVEs in CISA KEV (all):"]
-    seen = {}
-    for f in out["findings"]:
-        if f["in_kev"]:
-            seen.setdefault(f["cve"], []).append(f"{f['package']}={f['exposure']}/{f['context_reason']}")
-    L += [f"  {cve}  {', '.join(p)}" for cve, p in seen.items()] or ["  (none)"]
-    L += ["", f"findings={out['total_findings']} unique_cves={out['unique_cves']} unique_cves_in_kev={out['unique_cves_in_kev']} "
-              f"kev_catalog={out['kev_catalog_version']} trivy_db_age_days={out['db_age_days']}", "", "exceptions:"]
-    L += [f"  {e['status']:<8} {e['id']}{' ' + e['package'] if e['package'] else ''} owner={e['owner']} expires={e['expires']}"
-          f"{' - ' + e['note'] if e['note'] else ''}" for e in out["exceptions"]] or ["  (none)"]
-    L += ["", "assumptions:"] + [f"  {i}. {a}" for i, a in enumerate(out["assumptions"], 1)]
-    return "\n".join(L)
-
-
 def render_junit(out: dict, catalog: dict) -> str:
     """JUnit XML (Jenkins): one testcase per critical check and per KEV CVE found. Same decision as
     the exit code. Only fields already in the gate output (no process data, credentials or facts)."""
@@ -214,5 +201,16 @@ def render_junit(out: dict, catalog: dict) -> str:
     suite.extend(tc for tc, _ in cases)
     root = ET.Element("testsuites", tests=suite.get("tests"), failures=suite.get("failures"))
     root.append(suite)
+    for el in root.iter():  # control characters would make the XML unparseable
+        el.text = _XML_BAD.sub("", el.text) if el.text else el.text
+        for k, v in list(el.attrib.items()):
+            el.set(k, _XML_BAD.sub("", v))
     ET.indent(root)
     return ET.tostring(root, encoding="unicode", xml_declaration=False)
+
+
+def write_reports(out_dir: Path, out: dict, catalog: dict) -> None:
+    """The four fixed-name files of one run (each written atomically)."""
+    texts = (json.dumps(out, indent=2), render_junit(out, catalog), render_markdown(out), render_markdown(out, jenkins=True))
+    for name, text in zip(OUT_FILES, texts):
+        write_atomic(out_dir / name, text)
