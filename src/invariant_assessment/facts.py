@@ -94,6 +94,31 @@ _APPLICABILITY_CMD = (
     "else echo 'PROC unreadable'; fi"
 )
 
+# Exposure signal (INV-83): per process, ONLY the executable (readlink of
+# /proc/<pid>/exe), the file paths in /proc/<pid>/maps and the socket inodes of
+# /proc/<pid>/fd; plus /proc/net/{tcp,tcp6,udp,udp6}. Never cmdline nor environ.
+# Processes get no pid in the output (just a "P" separator). Same allowlist as
+# _APPLICABILITY_CMD: "No such file or directory" (kernel thread / exited pid;
+# "No such process" for a pid that exits mid-read) = ignored; any other failure
+# = "PROC unreadable" / "NET unreadable". The raw data stays in memory
+# (context.py reduces it to one state per finding).
+_EXPOSURE_CMD = (
+    'for f in tcp tcp6 udp udp6; do if n=$(cat /proc/net/$f 2>&1); then echo "NET $f"; printf "%s\\n" "$n"; '
+    'else echo "NET unreadable"; fi; done; '
+    'if readlink -v /proc/self/exe >/dev/null 2>&1; then echo "PROC ok"; '
+    'for d in /proc/[0-9]*; do '
+    'e=$(readlink -v "$d/exe" 2>&1); case "$e" in /*) echo P; echo "M ${e% (deleted)}";; '
+    '*"No such file or directory"*) continue;; *) echo "PROC unreadable"; continue;; esac; '
+    'if m=$(cat "$d/maps" 2>&1); then printf "%s\\n" "$m" | '
+    "awk '{i=index($0,\"/\"); if (NF>=6 && i>0) print \"M \" substr($0,i)}' | sort -u; "
+    'else case "$m" in *"No such file or directory"*|*"No such process"*) continue;; *) echo "PROC unreadable"; continue;; esac; fi; '
+    'if l=$(ls -1 "$d/fd" 2>&1); then for n in $l; do s=$(readlink -v "$d/fd/$n" 2>&1); '
+    'case "$s" in "socket:["*) s=${s#socket:[}; echo "S ${s%]}";; '
+    'readlink:*"No such file or directory"*) ;; readlink:*) echo "PROC unreadable";; esac; done; '
+    'else case "$l" in *"No such file or directory"*) continue;; *) echo "PROC unreadable"; continue;; esac; fi; '
+    'done; else echo "PROC unreadable"; fi'
+)
+
 # (SystemFacts attribute name, output marker, shell command). Read as plain
 # text -- each check does its own parsing/grepping over the raw content,
 # same as sshd_config was before it got a dedicated parser. A file that
@@ -117,6 +142,7 @@ _TEXT_BLOCKS = [
     # Applicability signals (INV-40 CLI, `requires` sshd/sudo): binary on PATH and
     # running processes (see _APPLICABILITY_CMD).
     ("applicability_probe_text", "===APPLICABILITY===", _APPLICABILITY_CMD),
+    ("exposure_probe_text", "===EXPOSURE===", _EXPOSURE_CMD),
     # /etc/security/pwquality.conf.d/*.conf is read together with the base file
     # (the password-quality enforcement check): pwquality reads the base file then
     # the conf.d dir, later values winning, so concatenating both here (missing
@@ -568,6 +594,7 @@ class SystemFacts:
     mounts_text: str = ""
     container_detection_text: str = ""
     applicability_probe_text: str = ""
+    exposure_probe_text: str = ""  # INV-83, parsed only by context.py
     # Raw `sshd -T` probe output, same slice of text parse_sshd_config()
     # already reduces to sshd_config -- kept here too because a parsed
     # empty dict is ambiguous (binary missing vs. permission error vs.
@@ -760,6 +787,7 @@ def _parse_collect_output(output: str) -> SystemFacts:
         mounts_text=text_values["mounts_text"],
         container_detection_text=text_values["container_detection_text"],
         applicability_probe_text=text_values["applicability_probe_text"],
+        exposure_probe_text=text_values["exposure_probe_text"],
     )
 
 
