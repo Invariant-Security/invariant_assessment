@@ -32,5 +32,7 @@ def test_exposed_blocks_with_two_reasons_and_idle_passes():
     rc, d = _gate("poc-cd-exposed")
     assert rc == 1 and d["decision"] == "block"
     assert [(r["type"], r["id"]) for r in d["reasons"]] == [("check", "etc_shadow_permissions"), ("cve", "CVE-2026-111497")]
+    assert all({"where", "why", "exploit", "fix"} == set(r["explanation"]) for r in d["reasons"]) and len(d["assumptions"]) == 2
     rc, d = _gate("poc-cd-idle")
     assert rc == 0 and d["decision"] == "pass" and d["reasons"] == []
+    assert len(d["assumptions"]) == 2

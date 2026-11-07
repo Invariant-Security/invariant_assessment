@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from invariant_assessment import cli, context, enrich, gate, vuln
+from invariant_assessment import cli, context, enrich, gate, gate_explain, vuln
 from invariant_assessment.cli import UsageError
 
 MARKER = "SEGREDO-MARCADO-gate-5c2e"
@@ -220,7 +220,61 @@ def test_marked_process_data_never_in_output(capsys, wired, monkeypatch):
     for fmt in ("json", "table"):
         rc, out, err = run(capsys, "--docker", "c", "--format", fmt)
         assert rc == 1 and MARKER not in out + err
+        assert "Where:" in out or fmt == "json"
     # the real probe parser keeps executable paths in memory only
     probe = f"PROC ok\nP\nM /opt/{MARKER}/lib.so\nS 11\n"
     rep = context.add_context({"findings": [{"package": "p", "installed_version": "1"}]}, probe, "DPKG ok\nPKG p ok 1\n")
     assert MARKER not in json.dumps(rep)
+
+
+# --- INV-85 explanations ---------------------------------------------------------------
+
+REAL_CAT, _ = cli.load_catalog()
+CRITICAL = sorted(c for c, m in REAL_CAT.items() if m["critical"])
+FIELDS = {"where", "why", "exploit", "fix"}
+
+
+def test_every_critical_check_has_nonempty_own_text():
+    assert len(CRITICAL) == 15 and set(CRITICAL) == set(gate_explain.CHECK_TEXT)
+    for cid in CRITICAL:
+        (r,), _ = gate.decide([{**res(cid, "FAIL"), "evidence": "mode 0666"}], [], {cid: {"critical": True}}, [], "img")
+        e = r["explanation"]
+        assert set(e) == FIELDS and all(v.strip() for v in e.values()) and "img" in e["where"] and "mode 0666" in e["where"]
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_not_assessed_explains_fail_closed(missing):
+    results = [] if missing else [{**res("crit", "NOT_ASSESSED"), "evidence": "exec denied"}]
+    (r,), _ = gate.decide(results, [], CAT, [], "c1")
+    assert "fails closed" in r["explanation"]["why"] and "privilege" in r["explanation"]["fix"]
+
+
+def test_cve_explanation_with_and_without_fixed_version_and_exposure():
+    base = {"installed_version": "1.0", "severity": "CRITICAL", "cvss_v3_score": 9.8, "epss_score": 0.5,
+            "kev_date_added": "2026-01-02", "kev_known_ransomware_campaign_use": "Known"}
+    (a,), _ = gate.decide(OK, [{**fnd("CVE-2026-1111", "p", "exposed"), **base, "fixed_version": "1.1"}], CAT, [], "img")
+    assert "1.1" in a["explanation"]["fix"] and "p 1.0" in a["explanation"]["where"]
+    assert "exposed:" in a["explanation"]["why"] and "2026-01-02" in a["explanation"]["why"] and "9.8" in a["explanation"]["why"]
+    (b,), _ = gate.decide(OK, [{**fnd("CVE-2026-1111", "p", "unknown"), **base, "fixed_version": None}], CAT, [], "img")
+    assert "unknown:" in b["explanation"]["why"] and "remove the package" in b["explanation"]["fix"]
+
+
+def test_explanation_never_changes_decision():
+    f = [fnd("CVE-2026-1111", "p", "exposed")]
+    reasons, _ = gate.decide([res("crit", "FAIL")], f, CAT, [])
+    assert ids(reasons) == [("check", "crit"), ("cve", "CVE-2026-1111")]
+
+
+def test_assumptions_always_present_and_explanation_in_table(capsys, wired):
+    rc, out, _ = run(capsys, "--docker", "c", "--format", "json")
+    assert rc == 0 and len(json.loads(out)["assumptions"]) == 2
+    wired["results"] = [res("crit", "FAIL")]
+    rc, out, _ = run(capsys, "--docker", "c")
+    for w in ("Where:", "Why:", "Exploit:", "Fix:", "assumptions:", "Docker socket"):
+        assert w in out
+
+
+def test_marked_path_not_in_explanation():
+    f = {**fnd("CVE-2026-1111", "p", "exposed", reason=f"/opt/{MARKER}/lib.so"), "installed_version": "1"}
+    (r,), _ = gate.decide(OK, [f], CAT, [], "c")
+    assert MARKER not in json.dumps(r["explanation"])

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from invariant_assessment import context, enrich, vuln
+from invariant_assessment import context, enrich, gate_explain, vuln
 from invariant_assessment.cli import UsageError, load_catalog
 
 EXCEPTIONS_FILE = ".invariant-exceptions.yaml"
@@ -70,17 +70,19 @@ def load_exceptions(path: str | None, today: date) -> list[dict]:
     return out
 
 
-def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions: list[dict]) -> tuple[list[dict], list[dict]]:
+def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions: list[dict], target: str = "target") -> tuple[list[dict], list[dict]]:
     """(reasons still blocking, exceptions report). Pure function."""
     reasons = []
     for r in results:
         if catalog.get(r["check_id"], {}).get("critical") and r["effective_status"] in ("FAIL", "NOT_ASSESSED"):
             reasons.append({"type": "check", "id": r["check_id"], "packages": None, "state": r["effective_status"],
-                            "reason": f"critical check {r['effective_status']}"})
+                            "reason": f"critical check {r['effective_status']}",
+                            "explanation": gate_explain.explain_check(r["check_id"], r["effective_status"], r, target)})
     present = {r["check_id"] for r in results}
     for cid in sorted(c for c, m in catalog.items() if m.get("critical") and c not in present):  # fail closed
         reasons.append({"type": "check", "id": cid, "packages": None, "state": "NOT_ASSESSED",
-                        "reason": "critical check missing from results"})
+                        "reason": "critical check missing from results",
+                        "explanation": gate_explain.explain_check(cid, "NOT_ASSESSED", None, target)})
     by_cve: dict[str, list[dict]] = {}
     for f in findings:
         if f["in_kev"] and f["exposure"] in BLOCKING_EXPOSURE:
@@ -88,7 +90,8 @@ def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions:
     for cve, fs in by_cve.items():  # findings are already ordered (epss desc)
         state = "exposed" if any(f["exposure"] == "exposed" for f in fs) else "unknown"
         reasons.append({"type": "cve", "id": cve, "packages": sorted({f["package"] for f in fs}), "state": state,
-                        "reason": "CVE in CISA KEV; " + "; ".join(sorted({f"{f['package']}: {f['exposure']} ({f['context_reason']})" for f in fs}))})
+                        "reason": "CVE in CISA KEV; " + "; ".join(sorted({f"{f['package']}: {f['exposure']} ({f['context_reason']})" for f in fs})),
+                        "explanation": gate_explain.explain_cve(cve, fs, target)})
     report, kept = [], []
     valid = [e for e in exceptions if e["status"] == "valid"]
     for rs in reasons:
@@ -128,12 +131,13 @@ def gate(args) -> dict:
     report["findings"] = enrich.enrich(report["findings"], feeds)
     context.collect(report, args.docker)
     findings = report.pop("findings")
-    reasons, exc_report = decide(out["results"], findings, catalog, exceptions)
+    reasons, exc_report = decide(out["results"], findings, catalog, exceptions, args.docker)
     warnings = [w for w in (report["db_age_warning"], feeds["warning"]) if w]
     warnings += [f"exception {e['id']} {e['status']}: {e['note']}" for e in exc_report if e["status"] in ("expired", "invalid")]
     return {
         "decision": "block" if reasons else "pass",
         "reasons": reasons,
+        "assumptions": gate_explain.ASSUMPTIONS,
         "exceptions": exc_report,
         "warnings": warnings,
         **out,
@@ -151,6 +155,7 @@ def render_table(out: dict) -> str:
     for r in out["reasons"]:
         pk = f" [{', '.join(r['packages'])}]" if r["packages"] else ""
         L.append(f"  BLOCK {r['type']} {r['id']}{pk} {r['state']}: {r['reason']}")
+        L += [f"      {k}: {r['explanation'][key]}" for k, key in (("Where", "where"), ("Why", "why"), ("Exploit", "exploit"), ("Fix", "fix"))]
     L += ["", "CVEs in CISA KEV (all):"]
     seen = {}
     for f in out["findings"]:
@@ -161,4 +166,5 @@ def render_table(out: dict) -> str:
               f"kev_catalog={out['kev_catalog_version']} trivy_db_age_days={out['db_age_days']}", "", "exceptions:"]
     L += [f"  {e['status']:<8} {e['id']}{' ' + e['package'] if e['package'] else ''} owner={e['owner']} expires={e['expires']}"
           f"{' - ' + e['note'] if e['note'] else ''}" for e in out["exceptions"]] or ["  (none)"]
+    L += ["", "assumptions:"] + [f"  {i}. {a}" for i, a in enumerate(out["assumptions"], 1)]
     return "\n".join(L)
