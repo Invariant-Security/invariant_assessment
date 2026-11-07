@@ -3,8 +3,8 @@
 Runs the INV-81 scan (vuln.py) and tags each finding with `exposure` and `context_reason`:
 
   exposed      ONE process maps a file of the vulnerable package AND owns a socket that
-               listens on a non-loopback address (TCP state 0A, UDP bound state 07; the
-               wildcards 0.0.0.0 and :: count; 127.0.0.0/8, ::1, ::ffff:127.x do not).
+               listens on a non-loopback address (TCP state 0A, UDP bound state 07; wildcard
+               v4/v6 count; the v4 loopback range, ::1 and v4-mapped loopback do not).
   not_exposed  the package is installed but no such process exists, or it has nothing
                executable (headers only).
   unknown      anything we could not prove: no dpkg, package not in dpkg (language
