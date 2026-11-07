@@ -88,15 +88,20 @@ container) with the embedded Trivy. Development entry point only: there is no
 - Offline: the database lives in a directory given by `INVARIANT_TRIVY_CACHE`
   (a volume, **never inside the image**: ~1.6 GB). Prepare it once, and refresh it
   regularly, with the same directory:
-  `trivy image --download-db-only --cache-dir $INVARIANT_TRIVY_CACHE` and
+  `trivy image --download-db-only --cache-dir $INVARIANT_TRIVY_CACHE` and,
+  only if you scan images with Java artifacts,
   `trivy image --download-java-db-only --cache-dir $INVARIANT_TRIVY_CACHE`.
   Scans run with `--skip-db-update --skip-java-db-update --offline-scan
   --cache-backend memory`, so the cache can be mounted **read-only** (`:ro`).
-- DB age (`UpdatedAt`): over 3 days = warning on stderr and in the JSON; 7 days
-  or more (vulnerability DB or Java DB) = exit 4. Limits:
-  `INVARIANT_TRIVY_DB_WARN_DAYS` / `INVARIANT_TRIVY_DB_MAX_DAYS`.
+- DB age (`UpdatedAt`): over 3 days = warning on stderr and in the JSON (vulnerability
+  DB only); 7 days or more = exit 4 (vulnerability DB, and the Java DB when present).
+  Limits: `INVARIANT_TRIVY_DB_WARN_DAYS` / `INVARIANT_TRIVY_DB_MAX_DAYS`.
+  The Java DB gets only the 7-day limit, no 3-day warning: Aqua republishes it about
+  every 3 days, so it often arrives already 2-3 days old and would warn right after
+  download. A missing Java DB is not checked here: it fails (exit 4, via Trivy's own
+  error) only when the image contains Java artifacts.
 - Exit 0 = ok, 2 = usage, 4 = any failure (Trivy missing or failing, invalid
-  JSON, DB or Java DB missing or too old); never 0 on failure. Traceback only
+  JSON, DB missing or too old); never 0 on failure. Traceback only
   with `INVARIANT_DEBUG=1`.
 - Trivy talks to the Docker socket to read the local image (the service already
   mounts it).

@@ -4,7 +4,7 @@ subcommand. It scans the IMAGE (ID resolved from the container), never the runni
 container, fully offline from a vulnerability DB kept in INVARIANT_TRIVY_CACHE.
 
 Exit codes: 0 ok; 2 usage; 4 any failure (Trivy missing/failing, invalid JSON, DB or
-Java DB missing, DB too old). Never 1 (reserved for the gate) and never 0 on failure.
+DB missing or too old, Java DB missing for an image with JARs). Never 1 (reserved for the gate) and never 0 on failure.
 """
 
 import argparse
@@ -57,11 +57,12 @@ def db_info(cache_dir: str, now: datetime) -> dict:
         trivy_version = v["Version"]
     except (ValueError, KeyError, TypeError) as e:
         raise VulnError("trivy version returned invalid JSON") from e
-    if not isinstance(v.get("VulnerabilityDB"), dict) or not isinstance(v.get("JavaDB"), dict):
-        raise VulnError("vulnerability DB or Java DB missing in the cache (see README, offline setup)")
+    if not isinstance(v.get("VulnerabilityDB"), dict):
+        raise VulnError("vulnerability DB missing in the cache (see README, offline setup)")
     try:
         updated = _parse_ts(v["VulnerabilityDB"]["UpdatedAt"])
-        java_updated = _parse_ts(v["JavaDB"]["UpdatedAt"])
+        # Java DB is optional: absent is fine (Trivy itself fails if the image has JARs).
+        java_updated = _parse_ts(v["JavaDB"]["UpdatedAt"]) if isinstance(v.get("JavaDB"), dict) else updated
         db_version = v["VulnerabilityDB"]["Version"]
     except (KeyError, ValueError, TypeError) as e:
         raise VulnError("trivy version returned an unexpected DB description") from e
@@ -130,6 +131,8 @@ def scan(image: str | None, container: str | None, cache_dir: str, now: datetime
               "--cache-backend", "memory", "--skip-db-update", "--skip-java-db-update", "--offline-scan",
               "--skip-check-update", target["scan"]], 900)
     if r.returncode != 0:
+        if "Java DB" in (r.stderr or ""):
+            raise VulnError("the image has Java artifacts and the Java DB is missing in the cache (see README)")
         raise VulnError(f"trivy exited with code {r.returncode}")
     try:
         report = json.loads(r.stdout)
