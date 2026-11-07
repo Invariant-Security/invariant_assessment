@@ -102,6 +102,25 @@ container) with the embedded Trivy. Development entry point only: there is no
   mounts it).
 - Credits: see `NOTICE` (Trivy, Aqua Security, Apache 2.0).
 
+## KEV and EPSS enrichment (INV-82)
+
+Offline, one preparation step (the only one with network access), then read-only scans:
+
+- `python -m invariant_assessment.prepare` stores in `$INVARIANT_TRIVY_CACHE` (same volume as
+  the Trivy DB) the Trivy DB and Java DB, plus `feeds/` with the CISA KEV JSON, the FIRST EPSS
+  CSV and `feeds/manifest.json` (per file `fetched_at` UTC and `sha256`; KEV `catalogVersion`;
+  EPSS `score_date`). Atomic writes; on a download failure it exits 4 and keeps what was there.
+- `python -m invariant_assessment.enrich <image> | --docker <container>` runs the `vuln` scan
+  and adds per finding `in_kev`, `kev_date_added`, `kev_known_ransomware_campaign_use`,
+  `epss_score`, `epss_percentile`, `epss_date` (EPSS null, never 0, when the CVE has none; KEV
+  fields null when not in KEV). Also `kev_catalog_version`, `feeds` (fetched_at, sha256),
+  `unique_cves_in_kev`. Findings are sorted by `in_kev` desc, `epss_score` desc (nulls last),
+  then severity. KEV is a blocking signal (the gate is INV-84); EPSS only informs and orders.
+- Feed age is counted from `fetched_at`: warning after 3 days (stderr and JSON), exit 4 from 7
+  (same `INVARIANT_TRIVY_DB_WARN_DAYS` / `INVARIANT_TRIVY_DB_MAX_DAYS`). Missing or corrupt feed,
+  or a `sha256` that differs from the manifest: exit 4. Exit 0 ok, 2 usage, 4 error; never 1.
+- Credits and data sources: see `NOTICE` (CISA KEV, FIRST EPSS).
+
 ## Development
 
 ```bash
