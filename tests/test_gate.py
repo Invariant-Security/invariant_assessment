@@ -18,6 +18,9 @@ def res(cid, eff):
     return {"check_id": cid, "status": "PASS", "effective_status": eff}
 
 
+OK = [res("crit", "PASS")]
+
+
 def fnd(cve, pkg, exposure, kev=True, epss=0.0, reason="x"):
     return {"cve": cve, "package": pkg, "in_kev": kev, "exposure": exposure, "context_reason": reason, "epss_score": epss}
 
@@ -42,23 +45,23 @@ def test_critical_check_missing_from_results_blocks_and_can_be_excepted():
 
 
 def test_non_critical_and_unknown_checks_never_block():
-    assert gate.decide([res("other", "FAIL"), res("nope", "FAIL")], [], CAT, [])[0] == []
+    assert gate.decide(OK + [res("other", "FAIL"), res("nope", "FAIL")], [], CAT, [])[0] == []
 
 
 @pytest.mark.parametrize("exposure,blocks", [("exposed", True), ("unknown", True), ("not_exposed", False)])
 def test_kev_rule(exposure, blocks):
-    assert bool(gate.decide([], [fnd("CVE-2026-1111", "p", exposure)], CAT, [])[0]) is blocks
+    assert bool(gate.decide(OK, [fnd("CVE-2026-1111", "p", exposure)], CAT, [])[0]) is blocks
 
 
 def test_epss_and_non_kev_never_block():
     f = [fnd("CVE-2026-1111", "p", "exposed", kev=False, epss=0.99), fnd("CVE-2026-2222", "p", "unknown", kev=False)]
-    assert gate.decide([], f, CAT, [])[0] == []
+    assert gate.decide(OK, f, CAT, [])[0] == []
 
 
 def test_one_reason_per_cve_grouping_packages():
     f = [fnd("CVE-2026-1111", "libbrotli1", "exposed"), fnd("CVE-2026-1111", "libbrotli-dev", "exposed"),
          fnd("CVE-2026-1111", "z", "not_exposed")]
-    (r,), _ = gate.decide([], f, CAT, [])
+    (r,), _ = gate.decide(OK, f, CAT, [])
     assert r["packages"] == ["libbrotli-dev", "libbrotli1"] and r["state"] == "exposed"
 
 
@@ -71,12 +74,12 @@ def test_exception_applied_check_and_cve():
 
 def test_cve_exception_covering_only_one_package_does_not_remove_reason():
     f = [fnd("CVE-2026-1111", "a", "exposed"), fnd("CVE-2026-1111", "b", "exposed")]
-    reasons, rep = gate.decide([], f, CAT, [exc("CVE-2026-1111", "a")])
+    reasons, rep = gate.decide(OK, f, CAT, [exc("CVE-2026-1111", "a")])
     assert ids(reasons) == [("cve", "CVE-2026-1111")] and rep[0]["status"] == "partial"
 
 
 def test_unused_exception_is_reported():
-    assert gate.decide([], [], CAT, [exc("crit")])[1][0]["status"] == "unused"
+    assert gate.decide(OK, [], CAT, [exc("crit")])[1][0]["status"] == "unused"
 
 
 def write(tmp_path, text):
