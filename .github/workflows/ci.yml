@@ -69,7 +69,7 @@ jobs:
       INVARIANT_TRIVY_CACHE: ${{ github.workspace }}/.trivy-cache
       INVARIANT_REQUIRE_TRIVY_IT: "1"
       INVARIANT_TRIVY_EXPECT_VERSION: "0.76.1"
-      INVARIANT_TRIVY_TEST_IMAGE: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
+      INVARIANT_TRIVY_TEST_IMAGE: alpine:3.12@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0

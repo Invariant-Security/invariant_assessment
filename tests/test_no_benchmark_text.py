@@ -33,6 +33,7 @@ ALLOW_TOKENS = {
     ("Dockerfile", "0.0.0.0"),  # uvicorn bind address
     ("README.md", "3.12.14"),  # same base image tag, in the bump instructions
     ("pyproject.toml", "0.1.0"),  # package version
+    (".github/workflows/ci.yml", "0.76.1"),  # pinned Trivy version
     ("tests/fixtures/docker-compose.yml", "127.0.0.1"),  # loopback-only port binding
     ("tests/fixtures/docker/ssh-target/Dockerfile", "127.0.0.1"),  # loopback comment
     ("tests/fixtures/docker/ssh-target-nonroot/Dockerfile", "127.0.0.1"),  # loopback comment
