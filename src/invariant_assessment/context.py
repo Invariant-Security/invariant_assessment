@@ -122,13 +122,17 @@ def add_context(report: dict, probe_text: str, pkg_text: str) -> dict:
     return report
 
 
-def run(container: str, cache_dir: str) -> dict:
-    report = vuln.scan(None, container, cache_dir)
+def collect(report: dict, container: str) -> dict:
+    """Probe the container and tag the findings of an already-made scan report."""
     tr = DockerExecTransport(target=container, timeout=60)
     names = sorted({f["package"] for f in report["findings"] if _PKG_RE.match(f["package"])})
     probe_text = tr.run("export LC_ALL=C; exec 2>&1; " + _EXPOSURE_CMD)
     pkg_text = tr.run(_PKG_CMD.replace("@PKGS@", " ".join(names))) if names else "DPKG ok"
     return add_context(report, probe_text, pkg_text)
+
+
+def run(container: str, cache_dir: str) -> dict:
+    return collect(vuln.scan(None, container, cache_dir), container)
 
 
 def main(argv: list[str] | None = None) -> int:
