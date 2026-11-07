@@ -9,6 +9,7 @@ All collection is reused (cli.assess, vuln.scan, enrich, context); nothing here 
 
 import os
 import re
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -168,3 +169,50 @@ def render_table(out: dict) -> str:
           f"{' - ' + e['note'] if e['note'] else ''}" for e in out["exceptions"]] or ["  (none)"]
     L += ["", "assumptions:"] + [f"  {i}. {a}" for i, a in enumerate(out["assumptions"], 1)]
     return "\n".join(L)
+
+
+def render_junit(out: dict, catalog: dict) -> str:
+    """JUnit XML (Jenkins): one testcase per critical check and per KEV CVE found. Same decision as
+    the exit code. Only fields already in the gate output (no process data, credentials or facts)."""
+    reasons = {(r["type"], r["id"]): r for r in out["reasons"]}
+    applied = {e["id"]: e for e in out["exceptions"] if e["status"] == "applied"}
+    status = {r["check_id"]: r["effective_status"] for r in out["results"]}
+    cases = []
+
+    def case(cls, name, reason=None, skipped=False, note=None):
+        tc = ET.Element("testcase", classname=cls, name=name)
+        if reason:
+            x = reason["explanation"]
+            body = "\n".join(f"{k}: {x[key]}" for k, key in (("Where", "where"), ("Why", "why"), ("Exploit", "exploit"), ("Fix", "fix")))
+            ET.SubElement(tc, "failure", message=reason["reason"], type=reason["state"]).text = body
+        elif skipped:
+            ET.SubElement(tc, "skipped", message="NOT_APPLICABLE")
+        e = applied.get(name)
+        if note or e:
+            ET.SubElement(tc, "system-out").text = "\n".join(
+                ([note] if note else []) + ([f"exception applied: id={e['id']} owner={e['owner']} expires={e['expires']}"] if e else []))
+        cases.append((tc, bool(reason)))
+
+    for cid in sorted(c for c, m in catalog.items() if m.get("critical")):
+        case("invariant.checks", cid, reasons.get(("check", cid)), status.get(cid) == "NOT_APPLICABLE", f"status: {status.get(cid, 'missing')}")
+    kev: dict[str, list[dict]] = {}
+    for f in out["findings"]:
+        if f["in_kev"]:
+            kev.setdefault(f["cve"], []).append(f)
+    for cve, fs in kev.items():
+        case("invariant.kev", cve, reasons.get(("cve", cve)),
+             note="; ".join(sorted({f"{f['package']}: {f['exposure']} ({f['context_reason']})" for f in fs})))
+    n_fail = sum(1 for _, bad in cases if bad)
+    suite = ET.Element("testsuite", name="invariant-gate", tests=str(len(cases)), failures=str(n_fail), errors="0",
+                       skipped=str(sum(1 for tc, _ in cases if tc.find("skipped") is not None)))
+    props = ET.SubElement(suite, "properties")
+    for k, v in (("decision", out["decision"]), ("target", out["target"]), ("image_ref", out["image_ref"]["ref"]),
+                 ("invariant_version", out.get("invariant_version")), ("catalog_version", out.get("catalog_version")),
+                 ("trivy_version", out.get("trivy_version")), ("kev_catalog_version", out["kev_catalog_version"]),
+                 ("run_id", out.get("run_id"))):
+        ET.SubElement(props, "property", name=k, value="" if v is None else str(v))
+    suite.extend(tc for tc, _ in cases)
+    root = ET.Element("testsuites", tests=suite.get("tests"), failures=suite.get("failures"))
+    root.append(suite)
+    ET.indent(root)
+    return ET.tostring(root, encoding="unicode", xml_declaration=False)

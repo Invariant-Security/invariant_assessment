@@ -36,3 +36,14 @@ def test_exposed_blocks_with_two_reasons_and_idle_passes():
     rc, d = _gate("poc-cd-idle")
     assert rc == 0 and d["decision"] == "pass" and d["reasons"] == []
     assert len(d["assumptions"]) == 2
+
+
+def test_junit_format_real_labs():
+    import xml.etree.ElementTree as ET
+
+    for name, rc_want, fails in (("poc-cd-exposed", 1, ["CVE-2026-111497", "etc_shadow_permissions"]), ("poc-cd-idle", 0, [])):
+        r = subprocess.run([sys.executable, "-m", "invariant_assessment.cli", "gate", "--docker", name, "--format", "junit"],
+                           capture_output=True, text=True, timeout=900)
+        suite = ET.fromstring(r.stdout).find("testsuite")
+        assert r.returncode == rc_want and int(suite.get("failures")) == len(fails)
+        assert sorted(t.get("name") for t in suite.findall("testcase") if t.find("failure") is not None) == fails

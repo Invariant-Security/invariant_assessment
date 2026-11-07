@@ -217,7 +217,7 @@ def test_marked_process_data_never_in_output(capsys, wired, monkeypatch):
     monkeypatch.setattr(context, "collect", lambda report, c: report)
     monkeypatch.setattr(cli, "assess", lambda a: {"results": [res("crit", "PASS")], "target": "c", "transport": "docker"})
     wired["findings"] = [fnd("CVE-2026-1111", "p", "exposed")]
-    for fmt in ("json", "table"):
+    for fmt in ("json", "table", "junit"):
         rc, out, err = run(capsys, "--docker", "c", "--format", fmt)
         assert rc == 1 and MARKER not in out + err
         assert "Where:" in out or fmt == "json"
@@ -278,3 +278,77 @@ def test_marked_path_not_in_explanation():
     f = {**fnd("CVE-2026-1111", "p", "exposed", reason=f"/opt/{MARKER}/lib.so"), "installed_version": "1"}
     (r,), _ = gate.decide(OK, [f], CAT, [], "c")
     assert MARKER not in json.dumps(r["explanation"])
+
+
+# --- INV-86 JUnit ------------------------------------------------------------------------
+
+import xml.etree.ElementTree as ET  # noqa: E402
+
+
+def junit(capsys, *argv):
+    rc, out, err = run(capsys, "--docker", "c", "--format", "junit", *argv)
+    return rc, (ET.fromstring(out) if out else None), out, err
+
+
+def test_junit_pass_counts_and_properties(capsys, wired):
+    wired["findings"] = [fnd("CVE-2026-1111", "p", "not_exposed", reason="not_executable")]
+    rc, root, out, _ = junit(capsys)
+    assert rc == 0 and out.startswith("<testsuites")
+    suite = root.find("testsuite")
+    assert (suite.get("name"), suite.get("tests"), suite.get("failures")) == ("invariant-gate", "2", "0")
+    assert [(t.get("classname"), t.get("name")) for t in suite.findall("testcase")] == [("invariant.checks", "crit"), ("invariant.kev", "CVE-2026-1111")]
+    assert "p: not_exposed (not_executable)" in suite.findall("testcase")[1].find("system-out").text
+    props = {p.get("name"): p.get("value") for p in suite.find("properties")}
+    assert props["decision"] == "pass" and props["target"] == "c" and props["image_ref"] == "r" and props["kev_catalog_version"] == "v"
+    assert set(props) == {"decision", "target", "image_ref", "invariant_version", "catalog_version", "trivy_version", "kev_catalog_version", "run_id"}
+
+
+def test_junit_block_failure_has_explanation_and_na_is_skipped(capsys, wired):
+    wired["results"] = [res("crit", "FAIL")]
+    wired["findings"] = [fnd("CVE-2026-1111", "p", "exposed", reason="listener_maps_package")]
+    rc, root, _, _ = junit(capsys)
+    assert rc == 1 and root.find("testsuite").get("failures") == "2"
+    for t in root.iter("testcase"):
+        txt = t.find("failure").text
+        assert all(w in txt for w in ("Where:", "Why:", "Exploit:", "Fix:"))
+    wired["results"] = [res("crit", "NOT_APPLICABLE")]
+    wired["findings"] = []
+    rc, root, _, _ = junit(capsys)
+    assert rc == 0 and root.find(".//testcase/skipped") is not None and root.find("testsuite").get("skipped") == "1"
+
+
+def test_junit_missing_critical_check_is_failure(capsys, wired):
+    wired["results"] = []
+    rc, root, _, _ = junit(capsys)
+    assert rc == 1 and root.find(".//testcase/failure").get("type") == "NOT_ASSESSED"
+
+
+def test_junit_applied_exception_passes_and_says_which(capsys, wired, tmp_path):
+    wired["results"] = [res("crit", "FAIL")]
+    p = write(tmp_path, f"exceptions:\n  - {{id: crit, justification: j, owner: alice, expires: {ISO(5)}}}\n")
+    rc, root, _, _ = junit(capsys, "--exceptions", p)
+    t = root.find(".//testcase")
+    assert rc == 0 and t.find("failure") is None
+    assert f"exception applied: id=crit owner=alice expires={ISO(5)}" in t.find("system-out").text
+
+
+def test_junit_escapes_and_never_leaks_marker(capsys, wired):
+    wired["findings"] = [fnd("CVE-2026-1111", "p<&>\"", "exposed", reason="x<&>")]
+    rc, root, out, err = junit(capsys)
+    assert rc == 1 and "p<&>" not in out and "p&lt;&amp;&gt;" in out
+    assert 'p<&>"' in root.find(".//testcase[@name='CVE-2026-1111']/failure").get("message")
+    assert MARKER not in out + err
+
+
+@pytest.mark.parametrize("argv,code", [(["--ssh", "u@h"], 2), (["--local"], 2)])
+def test_junit_error_prints_no_xml(capsys, wired, argv, code):
+    rc, out, _ = run(capsys, *argv, "--format", "junit")
+    assert rc == code and out == ""
+
+
+def test_junit_transport_error_prints_no_xml(capsys, wired, monkeypatch):
+    def boom(a):
+        raise cli.TransportUnreachableError("no container")
+    monkeypatch.setattr(cli, "assess", boom)
+    rc, out, _ = run(capsys, "--docker", "c", "--format", "junit")
+    assert rc == 3 and out == ""
