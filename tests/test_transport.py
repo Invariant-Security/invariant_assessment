@@ -130,7 +130,7 @@ def test_ssh_transport_password_auth_matches_docker_exec_facts():
     # content-sensitive one, must still match exactly. sshd_probe_raw is
     # sshd_config's own pre-parse raw text (same command, same PATH
     # sensitivity), so it inherits the same exclusion.
-    _PATH_DEPENDENT_FIELDS = {"sshd_config", "sshd_probe_raw", "audit_conf_text", "applicability_probe_text"}  # last: process list differs by session
+    _PATH_DEPENDENT_FIELDS = {"sshd_config", "sshd_probe_raw", "audit_conf_text", "applicability_probe_text", "exposure_probe_text"}  # last two: process list differs by session
     docker_dict = {k: v for k, v in vars(docker_facts).items() if k not in _PATH_DEPENDENT_FIELDS}
     ssh_dict = {k: v for k, v in vars(ssh_facts).items() if k not in _PATH_DEPENDENT_FIELDS}
     assert docker_dict == ssh_dict
