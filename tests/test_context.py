@@ -84,6 +84,46 @@ def test_package_rules():
     assert state(t, "DPKG ok\nPKG libvuln ok 1:1.0-1\nF libvuln /x.so\n") == ("not_exposed", "not_loaded_by_listener")  # epoch ok
 
 
+def _pk(files="", interp=False):
+    return "DPKG ok\nPKG p ok 1.0\n" + files + ("I p\n" if interp else "")
+
+
+P = {"package": "p", "installed_version": "1.0"}
+
+
+def test_interpreted_code_is_unknown_unless_proved_exposed():
+    t = probe([("tcp", row(V4_ANY, "0A", 11))], [(["/x.so"], ["11"])])
+    idle = probe([("tcp", row(V4_ANY, "0A", 11))], [(["/other.so"], ["11"])])
+    assert state(idle, _pk(interp=True), P) == ("unknown", "interpreted_code")  # .py / shebang script only
+    assert state(idle, _pk("F p /x.so\n", True), P) == ("unknown", "interpreted_code")  # .sh plus unmapped .so
+    assert state(t, _pk("F p /x.so\n", True), P) == ("exposed", "listener_maps_package")  # proof prevails
+    assert state(idle, _pk("F p /x.so\n"), P) == ("not_exposed", "not_loaded_by_listener")
+    assert state(idle, _pk(), P) == ("not_exposed", "not_executable")  # headers, docs, data
+
+
+def test_pkg_cmd_marks_interpreted_code_only(tmp_path):
+    import subprocess
+    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "noext").write_text("#!/bin/sh\n")
+    (tmp_path / "data").write_text("#!ok but not executable")
+    (tmp_path / "noext").chmod(0o755)
+    (tmp_path / "h.h").write_text("x")
+    # fake dpkg: -L lists the given files
+    b = tmp_path / "bin"
+    b.mkdir()
+    (b / "dpkg").write_text("#!/bin/sh\nfor f in $FILES; do echo $f; done\n")
+    (b / "dpkg-query").write_text("#!/bin/sh\necho 1.0\n")
+    for x in b.iterdir():
+        x.chmod(0o755)
+    def run(*names):
+        env = {"PATH": f"{b}:/usr/bin:/bin", "FILES": " ".join(str(tmp_path / n) for n in names)}
+        return subprocess.run(["sh", "-c", context._PKG_CMD.replace("@PKGS@", "p")], env=env, capture_output=True, text=True).stdout
+    assert "I p" in run("a.py", "a.py")
+    assert run("a.py", "a.py").count("I p") == 1
+    assert "I p" in run("noext")
+    assert "I p" not in run("data", "h.h")
+
+
 def test_deleted_suffix_and_unreadable_net_row():
     t = probe([("tcp", row(V4_ANY, "0A", 11))], [([MARK + " (deleted)"], ["11"])])
     assert state(t)[0] == "exposed"
