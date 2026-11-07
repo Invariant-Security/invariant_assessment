@@ -29,12 +29,12 @@ def test_cvss_nvd_first_then_vendor():
     assert vuln._cvss_v3({"nvd": {"V2Score": 4.3}}) is None and vuln._cvss_v3(None) is None
 
 
-def _stub(monkeypatch, version_json=None, image_json=None, image_rc=0, version_rc=0):
+def _stub(monkeypatch, version_json=None, image_json=None, image_rc=0, version_rc=0, image_err=""):
     def fake(argv, timeout):
         if argv[:2] == ["trivy", "version"]:
             return subprocess.CompletedProcess(argv, version_rc, version_json if isinstance(version_json, str) else json.dumps(version_json), "")
         if argv[:2] == ["trivy", "image"]:
-            return subprocess.CompletedProcess(argv, image_rc, image_json if isinstance(image_json, str) else json.dumps(image_json), "")
+            return subprocess.CompletedProcess(argv, image_rc, image_json if isinstance(image_json, str) else json.dumps(image_json), image_err)
         return subprocess.CompletedProcess(argv, 1, "", "")  # docker: not a local image
 
     monkeypatch.setattr(vuln, "_run", fake)
@@ -76,7 +76,6 @@ def test_db_age_limits_configurable(monkeypatch):
     {"version_json": version(8), "image_json": SAMPLE},  # 8 days
     {"version_json": version(1, 8), "image_json": SAMPLE},  # Java DB 8 days
     {"version_json": {"Version": "0.76"}, "image_json": SAMPLE},  # no DB at all
-    {"version_json": {"Version": "0.76", "VulnerabilityDB": version(1)["VulnerabilityDB"]}, "image_json": SAMPLE},  # no Java DB
     {"version_json": "not json", "image_json": SAMPLE},
     {"version_json": version(1), "image_json": "not json"},
     {"version_json": version(1), "image_json": "[]"},
@@ -91,6 +90,32 @@ def test_exit_4_cases(monkeypatch, capsys, kwargs):
     rc = vuln.main(["img"])
     cap = capsys.readouterr()
     assert rc == 4 and cap.out == "" and "Traceback" not in cap.err
+
+
+def test_no_java_db_is_fine_and_has_no_java_age_check(monkeypatch):
+    v = version(2)
+    del v["JavaDB"]
+    _stub(monkeypatch, v, SAMPLE)
+    out = vuln.scan("img", None, "/c", NOW)
+    assert out["total_findings"] == 4 and out["db_age_warning"] is None
+
+
+def test_java_db_age_has_no_warning_only_limit(monkeypatch):
+    _stub(monkeypatch, version(1, 5), SAMPLE)  # Java DB 5 days: over warn, under max
+    assert vuln.scan("img", None, "/c", NOW)["db_age_warning"] is None
+
+
+def test_image_with_jars_and_no_java_db_is_4_short(monkeypatch, capsys):
+    err = "FATAL\tFatal error\tUnable to initialize the Java DB: '--skip-java-db-update' cannot be specified on the first run\n"
+    v = version(1)
+    del v["JavaDB"]
+    _stub(monkeypatch, v, "", image_rc=1, image_err=err)
+    monkeypatch.setattr(vuln, "datetime", type("D", (datetime,), {"now": classmethod(lambda cls, tz=None: NOW)}))
+    monkeypatch.setenv("INVARIANT_TRIVY_CACHE", "/c")
+    monkeypatch.delenv("INVARIANT_DEBUG", raising=False)
+    assert vuln.main(["img"]) == 4
+    cap = capsys.readouterr()
+    assert cap.out == "" and "Java DB" in cap.err and "Traceback" not in cap.err and "FATAL" not in cap.err
 
 
 def test_trivy_missing_is_4_and_debug_traceback(monkeypatch, capsys):
