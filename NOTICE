@@ -13,3 +13,12 @@ Trivy v0.76.1
 Trivy is executed as a separate program (`trivy image`); it is not modified.
 Its vulnerability database is downloaded by the operator and is not part of
 this repository or of the image.
+
+Vulnerability data used by `invariant_assessment.enrich` (downloaded by the operator, not distributed)
+-----------------------------------------------------------------------------------------------------
+CISA Known Exploited Vulnerabilities (KEV) Catalog, Cybersecurity and Infrastructure Security Agency.
+  https://www.cisa.gov/known-exploited-vulnerabilities-catalog
+
+EPSS (Exploit Prediction Scoring System), FIRST (Forum of Incident Response and Security Teams).
+  https://www.first.org/epss/  (scores published daily, free of charge, no registration)
+  Credit: "EPSS scores by FIRST.org, https://www.first.org/epss".
