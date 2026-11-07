@@ -77,6 +77,10 @@ def decide(results: list[dict], findings: list[dict], catalog: dict, exceptions:
         if catalog.get(r["check_id"], {}).get("critical") and r["effective_status"] in ("FAIL", "NOT_ASSESSED"):
             reasons.append({"type": "check", "id": r["check_id"], "packages": None, "state": r["effective_status"],
                             "reason": f"critical check {r['effective_status']}"})
+    present = {r["check_id"] for r in results}
+    for cid in sorted(c for c, m in catalog.items() if m.get("critical") and c not in present):  # fail closed
+        reasons.append({"type": "check", "id": cid, "packages": None, "state": "NOT_ASSESSED",
+                        "reason": "critical check missing from results"})
     by_cve: dict[str, list[dict]] = {}
     for f in findings:
         if f["in_kev"] and f["exposure"] in BLOCKING_EXPOSURE:

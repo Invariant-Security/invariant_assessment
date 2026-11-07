@@ -35,6 +35,12 @@ def test_critical_check_rule(eff, blocks):
     assert bool(gate.decide([res("crit", eff)], [], CAT, [])[0]) is blocks
 
 
+def test_critical_check_missing_from_results_blocks_and_can_be_excepted():
+    (r,), _ = gate.decide([res("other", "PASS")], [], CAT, [])
+    assert (r["id"], r["state"], r["reason"]) == ("crit", "NOT_ASSESSED", "critical check missing from results")
+    assert gate.decide([], [], CAT, [exc("crit")])[0] == []
+
+
 def test_non_critical_and_unknown_checks_never_block():
     assert gate.decide([res("other", "FAIL"), res("nope", "FAIL")], [], CAT, [])[0] == []
 
