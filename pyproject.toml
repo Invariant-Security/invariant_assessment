@@ -7,6 +7,7 @@ license = "Apache-2.0"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
+    "pyyaml>=6.0,<7",  # exceptions file of `invariant gate` (INV-84); the lock pins the exact version
     "paramiko>=2.9",  # disabled_algorithms + rsa-sha2 host keys (INV-12)
 ]
 # ponytail: invariant_contracts is NOT a dependency here on purpose -- the

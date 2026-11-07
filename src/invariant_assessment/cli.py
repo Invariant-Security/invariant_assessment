@@ -3,8 +3,8 @@
 Exit codes: 0 = the assessment ran (FAIL results included); 2 = usage error;
 3 = transport (unreachable, auth, host key, missing container); 4 = internal
 error (unsupported/undetected OS, bad catalog, unexpected exception; a short
-message, traceback only with INVARIANT_DEBUG=1). 1 is reserved for the future
-`invariant gate`: this command never returns it.
+message, traceback only with INVARIANT_DEBUG=1). 1 is only returned by `invariant gate`
+(gate.py): this command never returns it.
 """
 
 import argparse
@@ -181,6 +181,14 @@ def _build_parser() -> argparse.ArgumentParser:
     a.add_argument("--known-hosts", metavar="PATH")
     a.add_argument("--host-key-fingerprint", metavar="SHA256:...")
     a.add_argument("--format", choices=("json", "table"), default="table")
+    g = sub.add_parser("gate", help="assess + CVEs + KEV + container context: exit 0 pass, 1 block")
+    t = g.add_mutually_exclusive_group(required=True)
+    t.add_argument("--docker", metavar="CONTAINER")
+    t.add_argument("--ssh", metavar="USER@HOST[:PORT]")
+    t.add_argument("--local", action="store_true")
+    g.add_argument("--exceptions", metavar="PATH", help="default: ./.invariant-exceptions.yaml if it exists")
+    g.add_argument("--format", choices=("json", "table"), default="table")
+    g.set_defaults(key=None, known_hosts=None, host_key_fingerprint=None)
     return p
 
 
@@ -274,8 +282,11 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as e:  # argparse already exits 2 on usage errors
         return int(e.code or 0)
+    from invariant_assessment import gate
+    from invariant_assessment.vuln import VulnError
+
     try:
-        out = assess(args)
+        out = gate.gate(args) if args.command == "gate" else assess(args)
     except UsageError as e:
         print(f"invariant: usage error: {e}", file=sys.stderr)
         return 2
@@ -288,12 +299,18 @@ def main(argv: list[str] | None = None) -> int:
     except (TransportUnreachableError, TransportTimeoutError, TransportError) as e:
         print(f"invariant: transport error: {e}", file=sys.stderr)
         return 3
-    except Exception as e:  # never leak 1 (reserved for the gate)
-        kind = "internal error" if isinstance(e, InternalError) else "unexpected error"
-        print(f"invariant: {kind}: {e if isinstance(e, InternalError) else type(e).__name__}", file=sys.stderr)
+    except Exception as e:  # `assess` never returns 1; the gate returns it only on a decision
+        known = isinstance(e, (InternalError, VulnError))
+        print(f"invariant: {'internal error' if known else 'unexpected error'}: {e if known else type(e).__name__}",
+              file=sys.stderr)
         if os.environ.get("INVARIANT_DEBUG") == "1":
             traceback.print_exc()
         return 4
+    if args.command == "gate":
+        for w in out["warnings"]:
+            print(f"invariant: warning: {w}", file=sys.stderr)
+        print(json.dumps(out, indent=2) if args.format == "json" else gate.render_table(out))
+        return 1 if out["decision"] == "block" else 0
     print(json.dumps(out, indent=2) if args.format == "json" else render_table(out))
     return 0
 
